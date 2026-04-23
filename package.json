@@ -2,7 +2,7 @@
   "name": "sandbox-dashboard",
   "displayName": "Sandbox Dashboard",
   "description": "Dashboard for UCN Sandbox labs — import, start, save, export. Built for aclabs / Arista Containerized Labs.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "packetanglers",
   "license": "MIT",
   "repository": {

@@ -5,7 +5,31 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - 2026-04-23
+## [0.2.2] - 2026-04-23
+
+### Fixed
+- **Dashboard no longer falsely reports `containerlab inspect
+  returned an unrecognized JSON shape` on clean containerlab 0.74+
+  hosts.** The parser was written against an older shape assumption
+  (top-level array or `{ containers: [...] }`), but current
+  containerlab defaults to an object keyed by lab name:
+  `{ "<lab_name>": [ <container>, ... ], ... }`. Empty state is `{}`.
+- Parser refactored into a dedicated `normalizeToContainers()` helper
+  that recognizes all three historical shapes plus the empty-object
+  case. Container records are flattened across all lab keys and
+  then grouped by `lab_name` — same downstream logic as before,
+  just fed from a more permissive input normalizer.
+
+### Internal
+- Six-way unit test of the normalizer (bare array, `containers`
+  wrapper, keyed-by-lab with one lab, keyed-by-lab with multiple
+  labs, empty object, unknown shape) run locally before release.
+
+### Notes
+- Pairs with `lab-base-sandbox` 1.0.3 (to be cut immediately after
+  this release).
+
+
 
 ### Fixed
 - **Webview script no longer silently fails to run in 0.2.0.** The

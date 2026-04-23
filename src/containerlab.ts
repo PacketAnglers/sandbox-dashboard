@@ -103,15 +103,24 @@ export async function inspectContainerlab(): Promise<ContainerlabStatus> {
         };
     }
 
-    // 4. Extract deployed labs. We're permissive about shape — different
-    //    containerlab versions structure this differently:
+    // 4. Extract deployed labs. We're permissive about shape — containerlab's
+    //    JSON output has varied across versions:
     //
-    //      - Newer: { containers: [ { lab_name, labPath, ... }, ... ] }
-    //      - Older: [ { lab_name, labPath, ... }, ... ] (array at top level)
+    //      - Current (0.74+): { "<lab_name>": [ <container>, ... ], ... }
+    //        Top-level is an OBJECT keyed by lab name; values are arrays of
+    //        container records. Each container still carries lab_name inside
+    //        it, so we don't actually depend on the outer key for grouping.
+    //      - Older: { "containers": [ <container>, ... ] }
+    //      - Oldest: [ <container>, ... ]  (bare array)
     //
-    //    We accept either. If the shape is something we don't recognize,
-    //    return empty with an error note — visible in the UI so a user
-    //    can file an issue instead of puzzling over silent emptiness.
+    //    When no labs are deployed, 0.74 typically exits non-zero (handled
+    //    above) or returns `{}`. We treat `{}` as the empty-labs state, not
+    //    as an unrecognized shape, so the dashboard reads "None running"
+    //    instead of spuriously surfacing an error.
+    //
+    //    If the shape is something we truly don't recognize, return empty
+    //    with an error note visible in the UI so a user can file an issue
+    //    instead of puzzling over silent emptiness.
     const labs = extractDeployedLabs(parsed);
     if (labs === null) {
         return {
@@ -136,24 +145,15 @@ export async function inspectContainerlab(): Promise<ContainerlabStatus> {
  * `[]` if we recognize the shape but there are no labs, or an array
  * of DeployedLab records if labs are present.
  *
- * Groups containers by their `lab_name` to produce one DeployedLab
- * per logical lab, with `nodeCount` summing the containers that
- * belong to it.
+ * Containerlab's top-level JSON shape has varied across versions; we
+ * normalize to a flat list of container records and then group by
+ * `lab_name` to produce one DeployedLab per logical lab, with
+ * `nodeCount` summing the containers that belong to it.
  */
 function extractDeployedLabs(parsed: unknown): DeployedLab[] | null {
-    // Normalize to an array of container records regardless of whether
-    // the top-level is an object with `containers` or already an array.
-    let containers: unknown[];
-    if (Array.isArray(parsed)) {
-        containers = parsed;
-    } else if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        'containers' in parsed &&
-        Array.isArray((parsed as { containers: unknown }).containers)
-    ) {
-        containers = (parsed as { containers: unknown[] }).containers;
-    } else {
+    // Normalize to a flat array of container records.
+    const containers = normalizeToContainers(parsed);
+    if (containers === null) {
         return null;
     }
 
@@ -186,4 +186,54 @@ function extractDeployedLabs(parsed: unknown): DeployedLab[] | null {
     }
 
     return Array.from(byLab.values());
+}
+
+/**
+ * Normalize containerlab's various JSON top-level shapes into a flat
+ * array of container records.
+ *
+ * Accepts:
+ *   - `[ <container>, ... ]`                 (oldest)
+ *   - `{ containers: [ ... ] }`              (older)
+ *   - `{ "<lab_name>": [ ... ], ... }`       (current 0.74+)
+ *   - `{}`                                   (current 0.74+, no labs)
+ *
+ * Returns `null` on genuinely unrecognized input.
+ */
+function normalizeToContainers(parsed: unknown): unknown[] | null {
+    // Shape 1: bare array.
+    if (Array.isArray(parsed)) {
+        return parsed;
+    }
+
+    if (parsed === null || typeof parsed !== 'object') {
+        return null;
+    }
+
+    const obj = parsed as Record<string, unknown>;
+
+    // Shape 2: { containers: [...] }
+    if (Array.isArray(obj.containers)) {
+        return obj.containers;
+    }
+
+    // Shape 3: { "<lab_name>": [...], ... } — current 0.74+ default.
+    // Every value must be an array for this to be the keyed-by-lab shape;
+    // flatten them into a single container list.
+    const values = Object.values(obj);
+
+    // Empty object → no labs deployed. Perfectly valid state.
+    if (values.length === 0) {
+        return [];
+    }
+
+    if (values.every((v) => Array.isArray(v))) {
+        const flat: unknown[] = [];
+        for (const v of values) {
+            flat.push(...(v as unknown[]));
+        }
+        return flat;
+    }
+
+    return null;
 }
