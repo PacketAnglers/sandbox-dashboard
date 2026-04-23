@@ -31,20 +31,9 @@
 import * as vscode from 'vscode';
 
 export { runExport } from './export';
+export { runImport } from './import';
 
 // ─── Stubs for actions not yet implemented ──────────────────────────────────
-
-/**
- * Import — load a previously-exported lab tarball into the workspace.
- * Real implementation lands in M3.3.
- */
-export async function runImport(
-    _context: vscode.ExtensionContext,
-    output: vscode.OutputChannel,
-): Promise<void> {
-    output.appendLine('[sandboxDashboard] action: import (stub, coming in M3.3)');
-    vscode.window.showInformationMessage('Import — coming in M3.3');
-}
 
 /**
  * Start — deploy the workspace's topology via `containerlab deploy`.

@@ -669,20 +669,18 @@ export class DashboardPanel {
             });
 
             function updateButtonEnablement(state) {
-                // Export: enabled iff a workspace is open. Exporting nothing
-                // makes no sense, and the runExport action would bail with a
-                // toast anyway — better to disable at the UI level.
                 const hasWorkspace = !!(state && state.workspaceRoot);
-                setDisabled('action-export', !hasWorkspace);
 
-                // Import / Start / Save: M3.1 behaviour preserved (always
-                // enabled — their stubs will just toast "coming in M3.x").
-                // Each of those milestones will tighten their rule here:
+                // Export & Import: both need a workspace to exist. Export has
+                // to have something to bundle; Import has to have somewhere
+                // to extract into.
+                setDisabled('action-export', !hasWorkspace);
+                setDisabled('action-import', !hasWorkspace);
+
+                // Start / Save: still permissive. M3.4/M3.5 will tighten:
                 //   - Start: disabled when state.topologies.length === 0
                 //   - Save:  disabled when state.containerlab.deployedLabs
                 //            .length === 0
-                //   - Import: always enabled
-                setDisabled('action-import', false);
                 setDisabled('action-start', false);
                 setDisabled('action-save', false);
             }
