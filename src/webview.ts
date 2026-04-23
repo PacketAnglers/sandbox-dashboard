@@ -669,14 +669,32 @@ export class DashboardPanel {
             });
 
             function updateButtonEnablement(state) {
-                // M3.1: placeholder — all buttons enabled regardless of state.
-                // Subsequent milestones will tighten this:
+                // Export: enabled iff a workspace is open. Exporting nothing
+                // makes no sense, and the runExport action would bail with a
+                // toast anyway — better to disable at the UI level.
+                const hasWorkspace = !!(state && state.workspaceRoot);
+                setDisabled('action-export', !hasWorkspace);
+
+                // Import / Start / Save: M3.1 behaviour preserved (always
+                // enabled — their stubs will just toast "coming in M3.x").
+                // Each of those milestones will tighten their rule here:
                 //   - Start: disabled when state.topologies.length === 0
-                //   - Save:  disabled when state.containerlab.deployedLabs.length === 0
-                //   - Export: disabled when topologies empty AND no workspace files
+                //   - Save:  disabled when state.containerlab.deployedLabs
+                //            .length === 0
                 //   - Import: always enabled
-                // Keeping the hook in place so M3.2-M3.5 don't reshape flow.
-                void state;
+                setDisabled('action-import', false);
+                setDisabled('action-start', false);
+                setDisabled('action-save', false);
+            }
+
+            function setDisabled(id, disabled) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (disabled) {
+                    el.setAttribute('disabled', 'disabled');
+                } else {
+                    el.removeAttribute('disabled');
+                }
             }
 
             // Every 5 seconds, refresh any [data-timestamp] element on the page.
