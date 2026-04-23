@@ -136,6 +136,32 @@ export class DashboardPanel {
         }
     }
 
+    /**
+     * Push an error banner to the webview.
+     *
+     * Distinct from state-level errors (containerlab inspect failing,
+     * unrecognized JSON shape — those surface inline inside the
+     * relevant section). postError is for truly-unexpected failures,
+     * typically thrown from inside an async compute that we weren't
+     * able to wrap into a well-formed state. The webview renders
+     * these as a prominent top-of-page banner so the user knows
+     * something broke.
+     *
+     * A subsequent successful postState clears the banner
+     * automatically (webview-side), so no explicit "clear" is needed
+     * from callers — just push fresh state and the UI recovers.
+     */
+    postError(message: string): void {
+        if (this.ready) {
+            const msg: ExtensionMessage = { type: 'error', payload: { message } };
+            this.panel.webview.postMessage(msg);
+        }
+        // If the webview isn't ready yet, we don't persist the error
+        // like we do with state — by the time the webview loads, the
+        // underlying problem may have resolved and showing a stale error
+        // would be confusing. Errors are ephemeral; state is durable.
+    }
+
     dispose(): void {
         currentPanel = undefined;
         this.output.appendLine('[sandboxDashboard] panel disposed');
@@ -248,15 +274,68 @@ export class DashboardPanel {
             font-size: 0.88rem;
             margin-left: 0.5rem;
         }
+        /* Topology grouping: root-level list + nested subfolder groups.
+           The subfolder label is prominent so users can scan by directory;
+           the files within are indented for clear hierarchy. */
+        .topo-group {
+            margin: 0.6rem 0;
+        }
+        .topo-group-label {
+            display: block;
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.88rem;
+            margin: 0.8rem 0 0.25rem;
+            padding-left: 0.1rem;
+        }
+        .topo-group-label::before { content: "📁 "; font-size: 0.9rem; }
+        .topo-item {
+            padding: 0.25rem 0.6rem 0.25rem 1.5rem;
+            font-size: 0.95rem;
+        }
+        .topo-item.root-level { padding-left: 0.6rem; }
+        /* Running-lab indicator: a small green dot signals "there is a live
+           deployment." Inherits from charts/diff colors so it respects high-
+           contrast themes. */
+        .running-dot {
+            display: inline-block;
+            width: 0.55rem;
+            height: 0.55rem;
+            border-radius: 50%;
+            background: var(--vscode-charts-green, #0a0);
+            margin-right: 0.4rem;
+            vertical-align: middle;
+        }
         .empty {
             color: var(--vscode-descriptionForeground);
             font-style: italic;
+        }
+        /* Hint inside an empty-state, rendered smaller/dimmer so it feels
+           like guidance, not filler. */
+        .empty-hint {
+            display: block;
+            font-style: normal;
+            font-size: 0.88rem;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 0.3rem;
+            opacity: 0.8;
         }
         .error {
             color: var(--vscode-errorForeground, #f44);
             font-size: 0.92rem;
             margin-top: 0.4rem;
         }
+        /* Top-of-page error banner: prominent enough to notice immediately,
+           but uses the editor's own error colors so it never clashes. */
+        .error-banner {
+            margin: 0 0 1.5rem;
+            padding: 0.75rem 1rem;
+            border-left: 3px solid var(--vscode-errorForeground, #f44);
+            background: var(--vscode-inputValidation-errorBackground, rgba(255,60,60,0.08));
+            color: var(--vscode-errorForeground, #f44);
+            font-size: 0.92rem;
+            display: none; /* shown via JS when an error state arrives */
+        }
+        .error-banner.visible { display: block; }
         code {
             font-family: var(--vscode-editor-font-family, 'SF Mono', Menlo, Consolas, monospace);
             background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.15));
@@ -277,6 +356,8 @@ export class DashboardPanel {
     <h1>🧪 Sandbox Dashboard</h1>
     <p class="tagline">Lab lifecycle — import, start, save, export — without leaving the IDE.</p>
 
+    <div id="error-banner" class="error-banner" role="alert"></div>
+
     <section id="section-workspace">
         <h2>Workspace</h2>
         <div id="workspace-body" class="empty">Computing…</div>
@@ -292,33 +373,33 @@ export class DashboardPanel {
         <div id="containerlab-body" class="empty">Computing…</div>
     </section>
 
-    <div class="footnote">
-        Buttons (Import / Start / Save / Export) land in Milestone 3. This release (0.2.0) adds live
-        workspace awareness so the dashboard reflects what's actually true about your lab.
-    </div>
-
     <script nonce="${nonce}">
-        // Sandbox Dashboard webview — M2.2 renderer.
+        // Sandbox Dashboard webview — M2.4 renderer.
         //
-        // Receives { type: 'state', payload: WorkspaceState } messages from the
-        // extension host and updates each section's DOM to match. Pure view
-        // layer — no computation, no fetching. If state changes 10x, we render
+        // Receives state / error messages from the extension host and
+        // updates each section's DOM to match. Pure view layer — no
+        // computation, no fetching. If state changes 10x, we render
         // 10x; if it never changes, we sit forever on the initial snapshot.
+        //
+        // M2.4 additions over M2.3:
+        //   • Topologies grouped by subdirectory
+        //   • Welcoming empty states (hints, not shrugs)
+        //   • Live-updating "Ns ago" timestamp (setInterval refresh)
+        //   • Prominent top-of-page error banner
+        //   • Error message-type handler
         (function () {
             const vscode = acquireVsCodeApi();
 
             // ── Helpers ────────────────────────────────────────────────────
-            // All DOM writes go through \`setBody\` so we can easily swap the
-            // rendering strategy later (e.g. animate changes in M4 polish).
             function setBody(sectionId, html) {
                 const el = document.getElementById(sectionId);
                 if (el) el.innerHTML = html;
             }
-            // Basic HTML escaping for user-controlled strings (file paths, lab
-            // names). Never inject state values into HTML without going through
-            // this — a .clab.yml path containing an unescaped \`<\` would break
-            // the DOM and invite XSS (even inside a webview, hygiene matters).
             function esc(s) {
+                // HTML-escape user-controlled strings before DOM insertion.
+                // File paths, lab names — anything that could contain '<' or
+                // '&' — must go through this. XSS hygiene inside a webview
+                // matters just as much as in a browser.
                 if (s == null) return '';
                 return String(s)
                     .replace(/&/g, '&amp;')
@@ -327,10 +408,10 @@ export class DashboardPanel {
                     .replace(/"/g, '&quot;')
                     .replace(/'/g, '&#39;');
             }
-            // Human-friendly "just now / 5s ago / 2m ago" for the last-checked
-            // timestamp. Computed at render time — not live-updating, that's
-            // something M2.4 polish could add via setInterval if we want it.
             function timeAgo(epochMs) {
+                // Human-friendly "just now / 5s ago / 2m ago". Updated both
+                // on state push and by the setInterval refresher so the
+                // timestamp never sits stale while the dashboard is open.
                 if (!epochMs) return 'never';
                 const diffSec = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
                 if (diffSec < 2) return 'just now';
@@ -341,11 +422,19 @@ export class DashboardPanel {
                 return h + 'h ago';
             }
 
-            // ── Renderers (one per section) ────────────────────────────────
+            // Holds the most-recent state so the setInterval refresher can
+            // repaint timestamps without waiting for the extension to push
+            // a fresh state message. If no state has arrived yet, this is
+            // undefined and the interval no-ops.
+            let latestState;
+
+            // ── Workspace section ──────────────────────────────────────────
             function renderWorkspace(state) {
                 if (!state.workspaceRoot) {
                     setBody('workspace-body',
-                        '<div class="empty">No workspace folder open. Open a folder to see lab status.</div>');
+                        '<div class="empty">No workspace folder open.' +
+                        '<span class="empty-hint">Open a folder via <code>File → Open Folder…</code> to see lab status.</span>' +
+                        '</div>');
                     return;
                 }
                 setBody('workspace-body',
@@ -353,62 +442,150 @@ export class DashboardPanel {
                     esc(state.workspaceRoot) + '</code></span></div>');
             }
 
+            // ── Topologies section ─────────────────────────────────────────
+            // Group by the first segment of the relative path. Root-level files
+            // show first with no group header; subfolders get a folder label
+            // ("📁 sandbox-template") with their files indented beneath.
+            function groupTopologies(topos) {
+                const root = [];
+                const groups = new Map(); // groupName → array
+                for (const t of topos) {
+                    if (!t.relativePath.includes('/') && !t.relativePath.includes('\\')) {
+                        root.push(t);
+                    } else {
+                        // Split on either separator for cross-platform safety.
+                        const firstSep = Math.min(
+                            ...[t.relativePath.indexOf('/'), t.relativePath.indexOf('\\')]
+                                .filter((i) => i !== -1),
+                        );
+                        const groupName = t.relativePath.slice(0, firstSep);
+                        if (!groups.has(groupName)) groups.set(groupName, []);
+                        groups.get(groupName).push(t);
+                    }
+                }
+                return { root, groups };
+            }
+
             function renderTopologies(state) {
                 const topos = state.topologies || [];
                 if (topos.length === 0) {
                     setBody('topologies-body',
-                        '<div class="empty">No <code>*.clab.yml</code> files found in this workspace.</div>');
+                        '<div class="empty">No <code>*.clab.yml</code> files in this workspace yet.' +
+                        '<span class="empty-hint">Create one to describe your topology, or import an existing lab tarball (coming in M3).</span>' +
+                        '</div>');
                     return;
                 }
-                let html = '<ul class="items">';
-                for (const t of topos) {
-                    html += '<li><code>' + esc(t.relativePath) + '</code>';
-                    if (t.depth > 0) {
-                        html += '<span class="meta">(depth ' + t.depth + ')</span>';
+
+                const { root, groups } = groupTopologies(topos);
+                let html = '';
+
+                // Root-level files render first, without a folder header.
+                if (root.length > 0) {
+                    html += '<div class="topo-group">';
+                    for (const t of root) {
+                        html += '<div class="topo-item root-level"><code>' + esc(t.relativePath) + '</code></div>';
                     }
-                    html += '</li>';
+                    html += '</div>';
                 }
-                html += '</ul>';
+
+                // Subfolders alphabetical for stable ordering across renders.
+                const sortedGroups = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+                for (const groupName of sortedGroups) {
+                    html += '<div class="topo-group">';
+                    html += '<span class="topo-group-label">' + esc(groupName) + '</span>';
+                    for (const t of groups.get(groupName)) {
+                        // Show the relative path sans the group prefix so the
+                        // indentation carries the directory context, not the text.
+                        const rest = t.relativePath.slice(groupName.length + 1);
+                        html += '<div class="topo-item"><code>' + esc(rest) + '</code></div>';
+                    }
+                    html += '</div>';
+                }
+
                 setBody('topologies-body', html);
             }
 
+            // ── ContainerLab section ───────────────────────────────────────
             function renderContainerlab(state) {
                 const c = state.containerlab || {};
                 if (!c.available) {
                     setBody('containerlab-body',
-                        '<div class="empty"><code>containerlab</code> CLI not available in this environment.</div>');
+                        '<div class="empty"><code>containerlab</code> CLI not detected.' +
+                        '<span class="empty-hint">The sandbox-dashboard container image ships containerlab — if you are seeing this outside that image, install it from <code>containerlab.dev</code>.</span>' +
+                        '</div>');
                     return;
                 }
                 const labs = c.deployedLabs || [];
                 let html = '';
                 html += '<div class="kv"><span class="k">Status</span><span class="v">Available</span></div>';
+
                 if (labs.length === 0) {
-                    html += '<div class="kv"><span class="k">Deployed labs</span><span class="v empty">None</span></div>';
+                    html += '<div class="kv"><span class="k">Deployed labs</span><span class="v empty">None running</span></div>';
                 } else {
                     html += '<div class="kv"><span class="k">Deployed labs</span><span class="v">' + labs.length + '</span></div>';
                     html += '<ul class="items">';
                     for (const lab of labs) {
-                        html += '<li><code>' + esc(lab.name) + '</code>' +
+                        html += '<li><span class="running-dot" title="Running"></span><code>' + esc(lab.name) + '</code>' +
                                 '<span class="meta">' + esc(String(lab.nodeCount)) + ' node' + (lab.nodeCount === 1 ? '' : 's') + '</span>';
                         if (lab.topologyPath) {
-                            html += '<div class="meta" style="margin-left:0;font-size:0.82rem;">' + esc(lab.topologyPath) + '</div>';
+                            html += '<div class="meta" style="margin-left:1.2rem;font-size:0.82rem;">' + esc(lab.topologyPath) + '</div>';
                         }
                         html += '</li>';
                     }
                     html += '</ul>';
                 }
-                html += '<div class="kv"><span class="k">Last checked</span><span class="v">' + timeAgo(c.lastCheckedAt) + '</span></div>';
+
+                html += '<div class="kv"><span class="k">Last checked</span>' +
+                        '<span class="v" data-timestamp="' + (c.lastCheckedAt || 0) + '">' +
+                        timeAgo(c.lastCheckedAt) + '</span></div>';
+
                 if (c.error) {
                     html += '<div class="error">' + esc(c.error) + '</div>';
                 }
                 setBody('containerlab-body', html);
             }
 
+            // ── Error banner ───────────────────────────────────────────────
+            // The extension sends { type: 'error', payload: { message } } when
+            // a truly unexpected failure occurred. State-level errors (like
+            // containerlab inspect failing) are rendered inline in their
+            // section; this banner is for "I don't know what's going on"
+            // situations that need user awareness.
+            function showErrorBanner(message) {
+                const banner = document.getElementById('error-banner');
+                if (!banner) return;
+                banner.textContent = message;
+                banner.classList.add('visible');
+            }
+            function clearErrorBanner() {
+                const banner = document.getElementById('error-banner');
+                if (!banner) return;
+                banner.textContent = '';
+                banner.classList.remove('visible');
+            }
+
+            // ── Render ─────────────────────────────────────────────────────
             function render(state) {
+                latestState = state;
+                // A successful state push means whatever error caused the
+                // banner is either resolved or we have fresh info that
+                // supersedes it. Clear it.
+                clearErrorBanner();
                 renderWorkspace(state);
                 renderTopologies(state);
                 renderContainerlab(state);
             }
+
+            // Every 5 seconds, refresh any [data-timestamp] element on the page.
+            // This keeps "Last checked: 12s ago" counting up smoothly even when
+            // the underlying state hasn't changed. Without this, the text would
+            // sit frozen at the value it had when state was last pushed.
+            setInterval(() => {
+                document.querySelectorAll('[data-timestamp]').forEach((el) => {
+                    const ts = Number(el.getAttribute('data-timestamp'));
+                    if (ts) el.textContent = timeAgo(ts);
+                });
+            }, 5000);
 
             // ── Message plumbing ───────────────────────────────────────────
             // Listen first, then signal ready — avoids a race where state
@@ -418,6 +595,8 @@ export class DashboardPanel {
                 if (!msg) return;
                 if (msg.type === 'state' && msg.payload) {
                     render(msg.payload);
+                } else if (msg.type === 'error' && msg.payload && msg.payload.message) {
+                    showErrorBanner(msg.payload.message);
                 }
             });
 

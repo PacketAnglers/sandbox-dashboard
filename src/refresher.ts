@@ -206,6 +206,17 @@ export class StateRefresher implements vscode.Disposable {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.output.appendLine(`[sandboxDashboard] state computation failed (${reason}): ${msg}`);
+            // computeWorkspaceState is designed to ALWAYS produce a well-formed
+            // state — all its internal failure paths return structured error
+            // info inside the state rather than throwing. So hitting this catch
+            // means something truly unexpected happened (e.g., VS Code API
+            // misuse, out-of-memory). Surface it as a prominent banner in the
+            // webview so the user sees something went wrong; the output
+            // channel has the detail for debugging.
+            const dashboard = getDashboard();
+            if (dashboard) {
+                dashboard.postError(`State computation failed: ${msg}`);
+            }
             return;
         }
 

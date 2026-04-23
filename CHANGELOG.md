@@ -39,6 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     compute starts while a slow compute is in flight, the slow
     result gets dropped when it resolves so stale state never
     overwrites fresh state.
+- **Display polish (M2.4):**
+  - **Topologies grouped by subdirectory.** A workspace with
+    `sandbox-template/topology.clab.yml` and `extra-lab/topology.clab.yml`
+    now shows two labeled folder groups (📁 sandbox-template, 📁
+    extra-lab) instead of a flat list. Root-level files appear
+    first, un-indented.
+  - **Welcoming empty states.** "No topology found" / "No labs
+    running" / "containerlab CLI not detected" each now include a
+    helpful next-step hint rather than a terse shrug.
+  - **Live-updating timestamps.** "Last checked: 12s ago" counts up
+    smoothly via a 5-second webview-side refresh interval, even when
+    the underlying state hasn't changed.
+  - **Running-lab indicator.** A small green dot next to each
+    deployed lab's name. Inherits theme colors so it respects
+    high-contrast modes.
+  - **Prominent error banner** for truly-unexpected compute
+    failures. State-level errors (containerlab inspect failing,
+    unrecognized JSON shape) continue to render inline in their
+    section; the banner is reserved for the "something really
+    broke" case. Clears automatically when state recovers.
 
 ### Changed
 - **Webview is now script-enabled under a strict Content Security
@@ -72,6 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DashboardPanel` accepts `onReady` and `onDispose` callbacks via an
   options object, letting cross-module concerns (like the refresher's
   poll lifecycle) hook in without coupling the webview module to them.
+- `DashboardPanel.postError(message)` pushes an ephemeral error banner
+  to the webview (distinct from state-level errors which render
+  inline). A subsequent successful `postState` clears the banner
+  automatically.
 
 ### Notes
 - Buttons (Import / Start / Save / Export) still land in Milestone 3.
