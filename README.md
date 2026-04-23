@@ -6,7 +6,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.2.0 — live workspace awareness.** The dashboard now observes the workspace in real time. Lifecycle buttons land in Milestone 3.
+**v0.2.1 — live workspace awareness (hotfix).** The dashboard observes the workspace in real time. Lifecycle buttons land in Milestone 3.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
@@ -14,6 +14,21 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 | **M2** | ✅ Shipped | Auto-open on first activation, workspace status, topology detection, containerlab inspection, live reactivity, display polish |
 | M3 | Planned | The four buttons: Import / Start / Save / Export |
 | M4 | Planned | Polish, confirmations, richer error handling |
+
+### Starting context for M3
+
+Before any button work, M3 opens with a **build-time syntax check on the emitted webview script**. The v0.2.0 → v0.2.1 hotfix was caused by a malformed string literal in the inline `<script>` block that killed the entire webview JS (and with it, the `ready` handshake) — undetectable by `tsc`, undetectable by `esbuild`, only caught by end-to-end smoke test in a real lab. The fix was trivial (2 chars); the diagnosis was not.
+
+Plan: add `scripts/check-webview-script.js` that loads the bundled extension with a mock `vscode`, captures the HTML emitted by `DashboardPanel.buildHtml()`, extracts the `<script>` body, and runs `node --check` on it. Wire into `npm run bundle` as a post-step so every future bundle either ships with a valid webview script or fails loudly at build time. Mirrors the `OPEN_VSX_TOKEN` pre-flight pattern: turn a class of silent-in-prod bug into a loud-at-build error.
+
+Only then proceed to the four buttons:
+
+1. **Import** — file picker → tarball → extract into workspace (with confirm-overwrite if a lab is already present).
+2. **Start** — detect topology file (picker if multiple) → `containerlab deploy` → state refreshes show live lab.
+3. **Save** — `containerlab save` on running lab + bundle workspace files into a download-ready tarball.
+4. **Export** — bundle current workspace state into a tarball, no deploy-state involvement.
+
+Buttons flow as `{ type: 'action', payload: { kind, ... } }` webview-to-extension messages — the reverse direction on the already-working message protocol. State channel unchanged; M2's observer keeps running under M3's actions.
 
 ## What the dashboard shows (v0.2.0)
 
