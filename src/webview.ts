@@ -450,12 +450,12 @@ export class DashboardPanel {
                 const root = [];
                 const groups = new Map(); // groupName → array
                 for (const t of topos) {
-                    if (!t.relativePath.includes('/') && !t.relativePath.includes('\\')) {
+                    if (!t.relativePath.includes('/') && !t.relativePath.includes('\\\\')) {
                         root.push(t);
                     } else {
                         // Split on either separator for cross-platform safety.
                         const firstSep = Math.min(
-                            ...[t.relativePath.indexOf('/'), t.relativePath.indexOf('\\')]
+                            ...[t.relativePath.indexOf('/'), t.relativePath.indexOf('\\\\')]
                                 .filter((i) => i !== -1),
                         );
                         const groupName = t.relativePath.slice(0, firstSep);

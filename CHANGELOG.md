@@ -5,7 +5,38 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-04-23
+## [0.2.1] - 2026-04-23
+
+### Fixed
+- **Webview script no longer silently fails to run in 0.2.0.** The
+  cross-platform path-splitting logic in the topology-grouping
+  renderer contained a malformed string literal (`'\'` — a single
+  backslash inside single quotes, which JS treats as an escaped
+  closing quote, making the string unterminated and throwing a
+  SyntaxError). Because the whole script block is parsed as one
+  unit, the syntax error killed the entire webview script,
+  including the `ready` handshake the extension waits for before
+  pushing state. The symptom was "Computing…" in every section
+  forever — the extension happily computed and queued state, but
+  the webview never signaled it was ready to receive it.
+- Root cause: my own over-zealous backslash-escape "fix" during
+  M2.4 polish. Caught by the end-to-end smoke test when the
+  sandbox-dashboard 0.2.0 container landed in a real lab. Fixed
+  and verified by extracting the emitted HTML from the bundle and
+  running `node --check` on the script body — the same validation
+  step that will now be a permanent part of the bundle sanity
+  check for future releases.
+
+### Lessons
+- Template-literal-inside-JS-string escape counting is easy to get
+  wrong. The rule: to emit one literal `\` in the webview JS
+  string, source needs 4 backslash characters (2 for the template
+  literal level → emits 2 for the JS string-literal level → runtime
+  value is 1).
+- Trust `node --check` over mental model. Adding a pre-commit
+  syntax check on the emitted webview script is on the M3 backlog.
+
+
 
 ### Added
 - **Auto-open on first activation per workspace.** The dashboard now
