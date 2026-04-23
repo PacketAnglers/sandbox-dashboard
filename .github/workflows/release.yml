@@ -41,6 +41,29 @@ jobs:
           fi
           echo "Tag and package.json agree on version $PKG_VERSION"
 
+      - name: Pre-flight — verify Open VSX token present (tag builds only)
+        # Hard-fail early if a release is being cut without the Open VSX
+        # publishing token configured. Previously this step silently skipped
+        # publishing, which meant tags would complete "green" but no version
+        # would actually land on Open VSX — confusing to diagnose after the
+        # fact. Failing at the top of the workflow catches the misconfig
+        # before time is spent building/packaging.
+        #
+        # Configure at: Settings → Secrets and variables → Actions → New
+        # repository secret, name = OPEN_VSX_TOKEN.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
+        run: |
+          if [ -z "$OPEN_VSX_TOKEN" ]; then
+            echo "::error::OPEN_VSX_TOKEN repository secret is not configured."
+            echo "::error::Tag builds publish to Open VSX. Configure the secret in"
+            echo "::error::Settings → Secrets and variables → Actions, or delete"
+            echo "::error::this tag and re-push once the secret is in place."
+            exit 1
+          fi
+          echo "OPEN_VSX_TOKEN is configured — tag build will publish to Open VSX."
+
       - name: Build bundle
         run: npm run bundle
 
@@ -63,22 +86,6 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-      - name: Check Open VSX credentials
-        # Surfaces whether publishing will run, so maintainers can see in the
-        # UI without digging into conditional logic.
-        if: startsWith(github.ref, 'refs/tags/v')
-        id: ovsx_check
-        env:
-          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
-        run: |
-          if [ -n "$OPEN_VSX_TOKEN" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-            echo "Open VSX token configured — will publish."
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "Open VSX token NOT configured — skipping publish."
-          fi
-
       - name: Resolve vsix filename for publishing
         if: startsWith(github.ref, 'refs/tags/v')
         id: vsix
@@ -93,7 +100,10 @@ jobs:
           echo "Found vsix: $VSIX_PATH"
 
       - name: Publish to Open VSX Registry (tag builds only)
-        if: steps.ovsx_check.outputs.publish == 'true'
+        # OPEN_VSX_TOKEN presence was already enforced by the pre-flight step
+        # at the top of the workflow, so this step can simply gate on the
+        # tag condition without needing a separate credential check.
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: HaaLeo/publish-vscode-extension@v2
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}

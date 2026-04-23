@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Single command `sandboxDashboard.open` that opens (or focuses) a
   placeholder webview describing what's coming in upcoming milestones.
 
+### CI
+- Release workflow pre-flights `OPEN_VSX_TOKEN` presence on tag builds
+  and fails loudly with a clear remediation message if the secret is
+  missing — catches misconfig before time is spent building/packaging.
+  Previously a missing token would silently skip publish, making the
+  tag look "green" while nothing landed on Open VSX.
+
 ### Notes
 - This is a scaffold release. No functional buttons, no workspace
   scanning, no lab operations — those land in Milestones 2-4. The
