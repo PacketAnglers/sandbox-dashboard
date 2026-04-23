@@ -40,6 +40,8 @@
   "scripts": {
     "vscode:prepublish": "npm run bundle",
     "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
+    "postbundle": "node scripts/check-webview-script.js",
+    "bundle:skip-check": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "npm run bundle && vsce package --no-dependencies"
