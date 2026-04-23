@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { showDashboard } from './webview';
+import { computeWorkspaceState } from './state';
+import { getDashboard, showDashboard } from './webview';
 
 /**
  * Sandbox Dashboard extension — entrypoint.
@@ -69,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('sandboxDashboard.open', () => {
             output.appendLine('[sandboxDashboard] open command invoked');
-            showDashboard(context, output);
+            openAndPushState(context, output);
         }),
     );
 
@@ -121,11 +122,57 @@ function maybeAutoOpen(
     }
 
     output.appendLine('[sandboxDashboard] first activation for this workspace; auto-opening dashboard');
-    showDashboard(context, output);
+    openAndPushState(context, output);
 
     // Record immediately so even a crash before the next activation doesn't
     // re-trigger auto-open. `update` returns a thenable, but for a simple
     // flag we don't need to await — VS Code persists asynchronously and
     // the ordering doesn't affect correctness.
     void context.workspaceState.update(AUTO_OPEN_SHOWN_KEY, true);
+}
+
+/**
+ * Open (or focus) the dashboard and push the latest workspace state.
+ *
+ * State computation is async (findFiles + containerlab inspect both take
+ * real time), so we fire the compute BEFORE the webview is ready and let
+ * the webview module's replay-on-ready logic handle timing. The first
+ * push happens whenever computation finishes; if the webview is still
+ * booting, the push is stored locally and replayed when 'ready' arrives.
+ *
+ * Callers don't need to wait for anything — the webview converges on its
+ * own.
+ */
+function openAndPushState(
+    context: vscode.ExtensionContext,
+    output: vscode.OutputChannel,
+): void {
+    const dashboard = showDashboard(context, output);
+
+    // Fire the async compute; don't await it at call site. We intentionally
+    // don't block the open flow on state being ready — the user sees the
+    // dashboard immediately with "Computing…" placeholders, then the real
+    // data swaps in when the promise resolves.
+    void computeWorkspaceState()
+        .then((state) => {
+            // The dashboard might have been disposed between open and
+            // state-ready (edge case: user closes the tab fast). Only push
+            // if it's still around.
+            const active = getDashboard();
+            if (active) {
+                active.postState(state);
+                output.appendLine(
+                    `[sandboxDashboard] pushed state: ${state.topologies.length} topologies, ` +
+                    `${state.containerlab.deployedLabs.length} deployed labs, ` +
+                    `containerlab ${state.containerlab.available ? 'available' : 'unavailable'}`,
+                );
+            }
+        })
+        .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            output.appendLine(`[sandboxDashboard] state computation failed: ${msg}`);
+            // We don't push an error message to the webview for M2.2 — the
+            // failure paths inside computeWorkspaceState all produce a
+            // well-formed empty state, so this catch is truly for surprises.
+        });
 }

@@ -175,10 +175,12 @@ export class DashboardPanel {
             `script-src 'nonce-${nonce}'`,
         ].join('; ');
 
-        // Content-wise M2.1 is still the placeholder — we validate that the
-        // new infrastructure (scripts on, CSP correct, message channel wired)
-        // works against the same visual surface the user already smoke-tested.
-        // M2.2 will swap the body for state-aware rendering.
+        // M2.2: the HTML ships with an initial "Computing state…" placeholder
+        // in every section. The script registers a message handler that
+        // receives state messages and swaps the placeholders for real content.
+        // This means the webview briefly shows "Computing…" between the ready
+        // handshake and the first state push — honest, informative UX that
+        // beats rendering a blank page.
         return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -200,21 +202,43 @@ export class DashboardPanel {
             margin: 0 0 2rem;
             font-size: 1.05rem;
         }
-        h2 {
-            font-size: 1.1rem;
+        section { margin: 1.75rem 0; }
+        section h2 {
+            font-size: 1.05rem;
             font-weight: 600;
-            margin: 1.5rem 0 0.5rem;
+            margin: 0 0 0.6rem;
             color: var(--vscode-foreground);
-        }
-        ul { margin: 0.4rem 0 1rem; padding-left: 1.4rem; }
-        li { margin: 0.25rem 0; }
-        .scaffold-note {
-            margin-top: 2rem;
-            padding: 1rem 1.2rem;
-            border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-focusBorder));
-            background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.08));
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.85rem;
             color: var(--vscode-descriptionForeground);
+        }
+        .kv { margin: 0.3rem 0; }
+        .kv .k {
+            display: inline-block;
+            min-width: 8.5rem;
+            color: var(--vscode-descriptionForeground);
+        }
+        .kv .v { color: var(--vscode-foreground); }
+        ul.items { list-style: none; margin: 0.4rem 0; padding: 0; }
+        ul.items li {
+            padding: 0.35rem 0.6rem;
+            border-left: 2px solid transparent;
+        }
+        ul.items li + li { border-top: 1px solid var(--vscode-widget-border, transparent); }
+        ul.items li .meta {
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.88rem;
+            margin-left: 0.5rem;
+        }
+        .empty {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+        }
+        .error {
+            color: var(--vscode-errorForeground, #f44);
             font-size: 0.92rem;
+            margin-top: 0.4rem;
         }
         code {
             font-family: var(--vscode-editor-font-family, 'SF Mono', Menlo, Consolas, monospace);
@@ -223,44 +247,160 @@ export class DashboardPanel {
             border-radius: 3px;
             font-size: 0.92em;
         }
+        .footnote {
+            margin-top: 2.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.85rem;
+        }
     </style>
 </head>
 <body>
     <h1>🧪 Sandbox Dashboard</h1>
     <p class="tagline">Lab lifecycle — import, start, save, export — without leaving the IDE.</p>
 
-    <h2>Coming in upcoming releases</h2>
-    <ul>
-        <li><strong>Import</strong> — load a previously-exported lab from a tarball.</li>
-        <li><strong>Start</strong> — deploy the topology in your workspace.</li>
-        <li><strong>Save</strong> — capture running configs and bundle the workspace for download.</li>
-        <li><strong>Export</strong> — bundle the current workspace as a tarball.</li>
-    </ul>
+    <section id="section-workspace">
+        <h2>Workspace</h2>
+        <div id="workspace-body" class="empty">Computing…</div>
+    </section>
 
-    <div class="scaffold-note">
-        <strong>This is the v0.2.0 scaffold (M2.1).</strong> Webview is now script-enabled
-        under a tight CSP, auto-opens once per workspace, and is ready to receive state
-        updates from the extension host. Stateful content lands in M2.2.
+    <section id="section-topologies">
+        <h2>Topologies</h2>
+        <div id="topologies-body" class="empty">Computing…</div>
+    </section>
+
+    <section id="section-containerlab">
+        <h2>ContainerLab</h2>
+        <div id="containerlab-body" class="empty">Computing…</div>
+    </section>
+
+    <div class="footnote">
+        Buttons (Import / Start / Save / Export) land in Milestone 3. This release (0.2.0) adds live
+        workspace awareness so the dashboard reflects what's actually true about your lab.
     </div>
 
     <script nonce="${nonce}">
-        // Sandbox Dashboard webview — M2.1 bootstrap.
+        // Sandbox Dashboard webview — M2.2 renderer.
         //
-        // For M2.1, all we do is the 'ready' handshake. This proves the
-        // message channel is plumbed end-to-end under our CSP. M2.2 adds
-        // a state-message handler that updates the DOM.
+        // Receives { type: 'state', payload: WorkspaceState } messages from the
+        // extension host and updates each section's DOM to match. Pure view
+        // layer — no computation, no fetching. If state changes 10x, we render
+        // 10x; if it never changes, we sit forever on the initial snapshot.
         (function () {
             const vscode = acquireVsCodeApi();
 
+            // ── Helpers ────────────────────────────────────────────────────
+            // All DOM writes go through \`setBody\` so we can easily swap the
+            // rendering strategy later (e.g. animate changes in M4 polish).
+            function setBody(sectionId, html) {
+                const el = document.getElementById(sectionId);
+                if (el) el.innerHTML = html;
+            }
+            // Basic HTML escaping for user-controlled strings (file paths, lab
+            // names). Never inject state values into HTML without going through
+            // this — a .clab.yml path containing an unescaped \`<\` would break
+            // the DOM and invite XSS (even inside a webview, hygiene matters).
+            function esc(s) {
+                if (s == null) return '';
+                return String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            // Human-friendly "just now / 5s ago / 2m ago" for the last-checked
+            // timestamp. Computed at render time — not live-updating, that's
+            // something M2.4 polish could add via setInterval if we want it.
+            function timeAgo(epochMs) {
+                if (!epochMs) return 'never';
+                const diffSec = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
+                if (diffSec < 2) return 'just now';
+                if (diffSec < 60) return diffSec + 's ago';
+                const m = Math.floor(diffSec / 60);
+                if (m < 60) return m + 'm ago';
+                const h = Math.floor(m / 60);
+                return h + 'h ago';
+            }
+
+            // ── Renderers (one per section) ────────────────────────────────
+            function renderWorkspace(state) {
+                if (!state.workspaceRoot) {
+                    setBody('workspace-body',
+                        '<div class="empty">No workspace folder open. Open a folder to see lab status.</div>');
+                    return;
+                }
+                setBody('workspace-body',
+                    '<div class="kv"><span class="k">Root</span><span class="v"><code>' +
+                    esc(state.workspaceRoot) + '</code></span></div>');
+            }
+
+            function renderTopologies(state) {
+                const topos = state.topologies || [];
+                if (topos.length === 0) {
+                    setBody('topologies-body',
+                        '<div class="empty">No <code>*.clab.yml</code> files found in this workspace.</div>');
+                    return;
+                }
+                let html = '<ul class="items">';
+                for (const t of topos) {
+                    html += '<li><code>' + esc(t.relativePath) + '</code>';
+                    if (t.depth > 0) {
+                        html += '<span class="meta">(depth ' + t.depth + ')</span>';
+                    }
+                    html += '</li>';
+                }
+                html += '</ul>';
+                setBody('topologies-body', html);
+            }
+
+            function renderContainerlab(state) {
+                const c = state.containerlab || {};
+                if (!c.available) {
+                    setBody('containerlab-body',
+                        '<div class="empty"><code>containerlab</code> CLI not available in this environment.</div>');
+                    return;
+                }
+                const labs = c.deployedLabs || [];
+                let html = '';
+                html += '<div class="kv"><span class="k">Status</span><span class="v">Available</span></div>';
+                if (labs.length === 0) {
+                    html += '<div class="kv"><span class="k">Deployed labs</span><span class="v empty">None</span></div>';
+                } else {
+                    html += '<div class="kv"><span class="k">Deployed labs</span><span class="v">' + labs.length + '</span></div>';
+                    html += '<ul class="items">';
+                    for (const lab of labs) {
+                        html += '<li><code>' + esc(lab.name) + '</code>' +
+                                '<span class="meta">' + esc(String(lab.nodeCount)) + ' node' + (lab.nodeCount === 1 ? '' : 's') + '</span>';
+                        if (lab.topologyPath) {
+                            html += '<div class="meta" style="margin-left:0;font-size:0.82rem;">' + esc(lab.topologyPath) + '</div>';
+                        }
+                        html += '</li>';
+                    }
+                    html += '</ul>';
+                }
+                html += '<div class="kv"><span class="k">Last checked</span><span class="v">' + timeAgo(c.lastCheckedAt) + '</span></div>';
+                if (c.error) {
+                    html += '<div class="error">' + esc(c.error) + '</div>';
+                }
+                setBody('containerlab-body', html);
+            }
+
+            function render(state) {
+                renderWorkspace(state);
+                renderTopologies(state);
+                renderContainerlab(state);
+            }
+
+            // ── Message plumbing ───────────────────────────────────────────
             // Listen first, then signal ready — avoids a race where state
             // arrives between our postMessage and addEventListener registration.
             window.addEventListener('message', (event) => {
                 const msg = event.data;
-                // M2.1: we accept state messages but ignore the payload.
-                // M2.2 replaces this with real rendering.
-                if (msg && msg.type === 'state') {
-                    // eslint-disable-next-line no-console
-                    console.log('[sandboxDashboard] state received (M2.1 ignores payload)', msg.payload);
+                if (!msg) return;
+                if (msg.type === 'state' && msg.payload) {
+                    render(msg.payload);
                 }
             });
 

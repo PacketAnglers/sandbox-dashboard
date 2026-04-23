@@ -15,20 +15,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user's last decision — if they closed it, we stay closed until
   they click the status bar button again. Tracked per-workspace, so
   a new lab directory always gets a fresh invitation.
+- **Live workspace awareness (M2.2).** The dashboard now shows:
+  - **Workspace root** — where you are
+  - **Topology files** — every `*.clab.yml` / `*.clab.yaml` in the
+    workspace, discovered via `vscode.workspace.findFiles` so the
+    user's `files.exclude` settings are honored
+  - **ContainerLab status** — whether the CLI is available, how
+    many labs are currently deployed (via `containerlab inspect
+    --all --format json`), and when the status was last checked
+  State is computed once on activation or command invocation; M2.3
+  adds file-watcher + polling reactivity.
 
 ### Changed
 - **Webview is now script-enabled under a strict Content Security
   Policy.** `enableScripts: true` with `default-src 'none'`,
   `style-src` allowing inline styles and the webview's own source,
   and `script-src` locked to a per-render nonce. External scripts,
-  eval, and unnonced inline scripts are all blocked. This
-  infrastructure lands now (without changing the visual surface)
-  so M2.2 can push state updates without further CSP work.
+  eval, and unnonced inline scripts are all blocked.
 - **Extension refactored into purpose-built modules.** `extension.ts`
   is now a lean glue module; `webview.ts` owns panel lifecycle, HTML
   rendering, and the message channel; `types.ts` is the shared type
-  surface (state shapes + message protocol). Single-responsibility
-  boundaries pay off starting in M2.2 when state computation lands.
+  surface; `state.ts` computes workspace state; `containerlab.ts`
+  wraps CLI inspection.
 
 ### Internal
 - Message protocol between extension and webview established with a
@@ -39,11 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never have to worry about timing.
 - Per-render CSP nonce via `generateNonce()` helper (32 random
   alphanumerics), following VS Code webview guidance.
+- Defensive JSON parsing for `containerlab inspect` output —
+  tolerates both legacy (top-level array) and current (containers
+  array) shapes, gracefully handles "no labs deployed" non-zero
+  exits, and surfaces genuinely unexpected failures through the
+  state's `error` field rather than crashing.
+- All user-controlled string values (workspace paths, topology paths,
+  lab names) HTML-escaped before DOM insertion in the webview.
 
 ### Notes
-- This is M2.1 of 4. The visible UI is still the placeholder — all
-  changes in this release are infrastructure. State-driven rendering
-  lands in M2.2.
+- The visible UI now shows real state. Buttons (Import / Start /
+  Save / Export) still land in Milestone 3. Reactivity — watching
+  for topology file changes, polling containerlab status — lands in
+  M2.3.
 - Pairs with `lab-base-sandbox` 1.0.1 (to be cut at end of M2).
 
 
