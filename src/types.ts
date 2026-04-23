@@ -85,13 +85,25 @@ export type ExtensionMessage =
     | { type: 'error'; payload: { message: string } };
 
 /**
+ * The four lifecycle actions the user can invoke from the dashboard.
+ *
+ * Implementations live in src/actions/{kind}.ts and are registered as
+ * VS Code commands (sandboxDashboard.<kind>) so they're also reachable
+ * from the command palette and keybindings — the webview button is
+ * one dispatch path, not the only one.
+ */
+export type ActionKind = 'import' | 'start' | 'save' | 'export';
+
+/**
  * Messages sent FROM the webview TO the extension host.
  *
- * M2 only carries the `ready` handshake — the webview tells us it
- * finished loading and is ready to receive initial state. Without
- * this, the first state push can race the script-load and drop.
+ * `ready` is the boot-time handshake (webview signals it's loaded).
  *
- * M3 will add `{ type: 'action'; ... }` for button clicks.
+ * `action` carries a user-initiated lifecycle request. The extension
+ * host's dispatcher translates these to `vscode.commands.executeCommand
+ * (sandboxDashboard.<kind>)` so the same action can be reached from
+ * the status bar, keyboard shortcuts, or other UI surfaces later.
  */
 export type WebviewMessage =
-    | { type: 'ready' };
+    | { type: 'ready' }
+    | { type: 'action'; payload: { kind: ActionKind } };

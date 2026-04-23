@@ -193,8 +193,27 @@ export class DashboardPanel {
                 // pushing state if it wants to.
                 this.opts.onReady?.();
                 break;
-            default:
-                this.output.appendLine(`[sandboxDashboard] unknown message: ${JSON.stringify(msg)}`);
+            case 'action':
+                // Dispatch to the registered VS Code command. Using
+                // executeCommand rather than calling the action directly
+                // keeps the command palette / keybinding / webview paths
+                // fully convergent — they all end up in the same place.
+                this.output.appendLine(
+                    `[sandboxDashboard] action requested from webview: ${msg.payload.kind}`,
+                );
+                void vscode.commands.executeCommand(
+                    `sandboxDashboard.${msg.payload.kind}`,
+                );
+                break;
+            default: {
+                // Exhaustiveness check — if a new message type is added to
+                // WebviewMessage, TypeScript flags this line as an error
+                // until we handle it above.
+                const _exhaustive: never = msg;
+                this.output.appendLine(
+                    `[sandboxDashboard] unknown message: ${JSON.stringify(_exhaustive)}`,
+                );
+            }
         }
     }
 
@@ -336,6 +355,44 @@ export class DashboardPanel {
             display: none; /* shown via JS when an error state arrives */
         }
         .error-banner.visible { display: block; }
+        /* Actions row: the four lifecycle buttons at the top of the
+           dashboard. Uses VS Code's own button color tokens so it reads
+           as a native control in whichever theme the user has active. */
+        .actions-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0.5rem 0 1.5rem;
+        }
+        .action-btn {
+            /* Mimic a VS Code button. These CSS vars are provided by the
+               editor to every webview; if a theme ever stops defining
+               them, we fall back to reasonable defaults. */
+            background: var(--vscode-button-background, #0e639c);
+            color: var(--vscode-button-foreground, #fff);
+            border: 1px solid var(--vscode-button-border, transparent);
+            padding: 0.45rem 0.9rem;
+            font-size: 0.92rem;
+            font-family: var(--vscode-font-family);
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background 0.15s ease, opacity 0.15s ease;
+        }
+        .action-btn:hover:not(:disabled) {
+            background: var(--vscode-button-hoverBackground, #1177bb);
+        }
+        .action-btn:focus {
+            outline: 1px solid var(--vscode-focusBorder, #007fd4);
+            outline-offset: 2px;
+        }
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .action-btn .icon {
+            margin-right: 0.35rem;
+            font-size: 0.95em;
+        }
         code {
             font-family: var(--vscode-editor-font-family, 'SF Mono', Menlo, Consolas, monospace);
             background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.15));
@@ -357,6 +414,24 @@ export class DashboardPanel {
     <p class="tagline">Lab lifecycle — import, start, save, export — without leaving the IDE.</p>
 
     <div id="error-banner" class="error-banner" role="alert"></div>
+
+    <section id="section-actions">
+        <h2>Actions</h2>
+        <div class="actions-row">
+            <button type="button" class="action-btn" data-action="import" id="action-import">
+                <span class="icon">📥</span>Import
+            </button>
+            <button type="button" class="action-btn" data-action="start" id="action-start">
+                <span class="icon">▶️</span>Start
+            </button>
+            <button type="button" class="action-btn" data-action="save" id="action-save">
+                <span class="icon">💾</span>Save
+            </button>
+            <button type="button" class="action-btn" data-action="export" id="action-export">
+                <span class="icon">📦</span>Export
+            </button>
+        </div>
+    </section>
 
     <section id="section-workspace">
         <h2>Workspace</h2>
@@ -576,6 +651,34 @@ export class DashboardPanel {
                 renderContainerlab(state);
             }
 
+            // ── Action buttons ─────────────────────────────────────────────
+            // Each button has a data-action attribute whose value matches the
+            // ActionKind union in src/types.ts. Clicking sends a message to
+            // the extension host, which dispatches to the corresponding
+            // VS Code command (sandboxDashboard.<kind>).
+            //
+            // In M3.1 all buttons are always enabled. M3.2-M3.5 will tighten
+            // updateButtonEnablement() as each action gains real behavior,
+            // disabling buttons whose preconditions aren't met.
+            document.querySelectorAll('.action-btn[data-action]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const kind = btn.getAttribute('data-action');
+                    if (!kind) return;
+                    vscode.postMessage({ type: 'action', payload: { kind: kind } });
+                });
+            });
+
+            function updateButtonEnablement(state) {
+                // M3.1: placeholder — all buttons enabled regardless of state.
+                // Subsequent milestones will tighten this:
+                //   - Start: disabled when state.topologies.length === 0
+                //   - Save:  disabled when state.containerlab.deployedLabs.length === 0
+                //   - Export: disabled when topologies empty AND no workspace files
+                //   - Import: always enabled
+                // Keeping the hook in place so M3.2-M3.5 don't reshape flow.
+                void state;
+            }
+
             // Every 5 seconds, refresh any [data-timestamp] element on the page.
             // This keeps "Last checked: 12s ago" counting up smoothly even when
             // the underlying state hasn't changed. Without this, the text would
@@ -595,6 +698,7 @@ export class DashboardPanel {
                 if (!msg) return;
                 if (msg.type === 'state' && msg.payload) {
                     render(msg.payload);
+                    updateButtonEnablement(msg.payload);
                 } else if (msg.type === 'error' && msg.payload && msg.payload.message) {
                     showErrorBanner(msg.payload.message);
                 }

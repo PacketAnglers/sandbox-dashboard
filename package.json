@@ -34,6 +34,22 @@
       {
         "command": "sandboxDashboard.open",
         "title": "Sandbox Dashboard: Open"
+      },
+      {
+        "command": "sandboxDashboard.import",
+        "title": "Sandbox Dashboard: Import Lab from Tarball"
+      },
+      {
+        "command": "sandboxDashboard.start",
+        "title": "Sandbox Dashboard: Start Lab"
+      },
+      {
+        "command": "sandboxDashboard.save",
+        "title": "Sandbox Dashboard: Save Lab (Capture Configs + Export)"
+      },
+      {
+        "command": "sandboxDashboard.export",
+        "title": "Sandbox Dashboard: Export Workspace as Tarball"
       }
     ]
   },

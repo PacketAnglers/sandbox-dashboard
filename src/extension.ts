@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { runExport, runImport, runSave, runStart } from './actions';
 import { StateRefresher } from './refresher';
 import { showDashboard } from './webview';
 
@@ -83,6 +84,10 @@ export function activate(context: vscode.ExtensionContext) {
             output.appendLine('[sandboxDashboard] open command invoked');
             openAndRefresh(context, output, refresher);
         }),
+        vscode.commands.registerCommand('sandboxDashboard.import', () => runImport(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.start',  () => runStart(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.export', () => runExport(context, output)),
     );
 
     // ── Auto-open policy ───────────────────────────────────────────────────
