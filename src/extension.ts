@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { computeWorkspaceState } from './state';
-import { getDashboard, showDashboard } from './webview';
+import { StateRefresher } from './refresher';
+import { showDashboard } from './webview';
 
 /**
  * Sandbox Dashboard extension — entrypoint.
@@ -25,17 +25,18 @@ import { getDashboard, showDashboard } from './webview';
  *   - the auto-open policy (once-per-workspace)
  *
  * Everything else lives in purpose-built modules:
- *   - src/webview.ts  → panel lifecycle, HTML, CSP, message protocol
- *   - src/types.ts    → shared types (state + messages)
- *   - src/state.ts    → (M2.2) workspace state computation
- *   - src/containerlab.ts → (M2.2) CLI wrapper
+ *   - src/webview.ts       → panel lifecycle, HTML, CSP, message protocol
+ *   - src/types.ts         → shared types (state + messages)
+ *   - src/state.ts         → workspace state computation
+ *   - src/containerlab.ts  → CLI wrapper
+ *   - src/refresher.ts     → reactivity engine (watchers + polling + debounce)
  *
  * MILESTONE STATUS
  * ────────────────
  *   M1  ✓ scaffold (0.1.0)
- *   M2.1 ✓ auto-open + script-enabled webview + message plumbing (THIS)
- *   M2.2 workspace state model + initial snapshot
- *   M2.3 file watcher + containerlab polling (reactivity)
+ *   M2.1 ✓ auto-open + script-enabled webview + message plumbing
+ *   M2.2 ✓ workspace state model + initial snapshot
+ *   M2.3 ✓ file watcher + containerlab polling (reactivity) (THIS)
  *   M2.4 state display polish
  *   M3  the four buttons (Import / Start / Save / Export)
  *   M4  polish, confirmations, error handling
@@ -50,7 +51,17 @@ const AUTO_OPEN_SHOWN_KEY = 'sandboxDashboard.autoOpenShown';
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.2.0 — M2.1)');
+    output.appendLine('[sandboxDashboard] activated (v0.2.0 — M2.3)');
+
+    // ── Reactivity engine ──────────────────────────────────────────────────
+    // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,
+    // starts a 30s containerlab poll, and handles debouncing + race safety
+    // for recomputes. Any caller can request a fresh compute via
+    // refresher.schedule(reason); if the dashboard is open, the result gets
+    // pushed to the webview; if not, the compute result is simply not
+    // displayed until the user opens the dashboard.
+    const refresher = new StateRefresher(output);
+    context.subscriptions.push(refresher);
 
     // ── Status bar button ──────────────────────────────────────────────────
     // Permanent $(beaker) Sandbox Dashboard button. One click opens (or
@@ -70,7 +81,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('sandboxDashboard.open', () => {
             output.appendLine('[sandboxDashboard] open command invoked');
-            openAndPushState(context, output);
+            openAndRefresh(context, output, refresher);
         }),
     );
 
@@ -90,7 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Why not always-open? Sandbox labs get long-lived. Nagging on every
     // VS Code restart would be annoying after a few days. "Once per workspace"
     // threads the needle between discovery and respect.
-    maybeAutoOpen(context, output);
+    maybeAutoOpen(context, output, refresher);
 }
 
 export function deactivate() {
@@ -106,6 +117,7 @@ export function deactivate() {
 function maybeAutoOpen(
     context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
+    refresher: StateRefresher,
 ): void {
     // No workspace folder → no workspace state scope → nowhere to record
     // the auto-open flag. Skip auto-open; the user can still click the
@@ -122,7 +134,7 @@ function maybeAutoOpen(
     }
 
     output.appendLine('[sandboxDashboard] first activation for this workspace; auto-opening dashboard');
-    openAndPushState(context, output);
+    openAndRefresh(context, output, refresher);
 
     // Record immediately so even a crash before the next activation doesn't
     // re-trigger auto-open. `update` returns a thenable, but for a simple
@@ -132,47 +144,25 @@ function maybeAutoOpen(
 }
 
 /**
- * Open (or focus) the dashboard and push the latest workspace state.
+ * Open (or focus) the dashboard and trigger a fresh state refresh.
  *
- * State computation is async (findFiles + containerlab inspect both take
- * real time), so we fire the compute BEFORE the webview is ready and let
- * the webview module's replay-on-ready logic handle timing. The first
- * push happens whenever computation finishes; if the webview is still
- * booting, the push is stored locally and replayed when 'ready' arrives.
+ * State computation is async and flows through the StateRefresher so
+ * the debounce + latest-wins logic applies uniformly whether the
+ * refresh was triggered by a file change, the poll timer, or a
+ * user-invoked command.
  *
- * Callers don't need to wait for anything — the webview converges on its
- * own.
+ * The user sees "Computing…" placeholders for ~FS_DEBOUNCE_MS + the
+ * compute duration, then the real state swaps in. For a "I just
+ * clicked the button" interaction, the 300ms debounce is imperceptible.
  */
-function openAndPushState(
+function openAndRefresh(
     context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
+    refresher: StateRefresher,
 ): void {
-    const dashboard = showDashboard(context, output);
-
-    // Fire the async compute; don't await it at call site. We intentionally
-    // don't block the open flow on state being ready — the user sees the
-    // dashboard immediately with "Computing…" placeholders, then the real
-    // data swaps in when the promise resolves.
-    void computeWorkspaceState()
-        .then((state) => {
-            // The dashboard might have been disposed between open and
-            // state-ready (edge case: user closes the tab fast). Only push
-            // if it's still around.
-            const active = getDashboard();
-            if (active) {
-                active.postState(state);
-                output.appendLine(
-                    `[sandboxDashboard] pushed state: ${state.topologies.length} topologies, ` +
-                    `${state.containerlab.deployedLabs.length} deployed labs, ` +
-                    `containerlab ${state.containerlab.available ? 'available' : 'unavailable'}`,
-                );
-            }
-        })
-        .catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            output.appendLine(`[sandboxDashboard] state computation failed: ${msg}`);
-            // We don't push an error message to the webview for M2.2 — the
-            // failure paths inside computeWorkspaceState all produce a
-            // well-formed empty state, so this catch is truly for surprises.
-        });
+    showDashboard(context, output, {
+        onDispose: () => refresher.notifyDashboardClosed(),
+    });
+    refresher.notifyDashboardOpened();
+    refresher.schedule('open command');
 }

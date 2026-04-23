@@ -30,10 +30,24 @@ let currentPanel: DashboardPanel | undefined;
  * signals it's ready to receive state. Extension.ts uses this to
  * push the initial state snapshot without racing script-load.
  */
+/**
+ * Options for showing the dashboard.
+ *
+ * Callbacks are decoupling hooks for cross-module concerns (like the
+ * refresher wanting to know when the panel opens/closes) without the
+ * webview module needing to know about the refresher.
+ */
+export interface ShowDashboardOptions {
+    /** Fires once the first time the webview signals it's ready to receive state. */
+    onReady?: () => void;
+    /** Fires when the panel is disposed (user closed tab, or extension shutdown). */
+    onDispose?: () => void;
+}
+
 export function showDashboard(
     context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
-    onReady?: () => void,
+    opts: ShowDashboardOptions = {},
 ): DashboardPanel {
     if (currentPanel) {
         currentPanel.reveal();
@@ -41,7 +55,7 @@ export function showDashboard(
         return currentPanel;
     }
 
-    currentPanel = new DashboardPanel(context, output, onReady);
+    currentPanel = new DashboardPanel(context, output, opts);
     output.appendLine('[sandboxDashboard] panel created');
     return currentPanel;
 }
@@ -68,7 +82,7 @@ export class DashboardPanel {
     constructor(
         context: vscode.ExtensionContext,
         output: vscode.OutputChannel,
-        private readonly onReady?: () => void,
+        private readonly opts: ShowDashboardOptions = {},
     ) {
         this.output = output;
 
@@ -130,6 +144,9 @@ export class DashboardPanel {
             d?.dispose();
         }
         this.panel.dispose();
+        // Fire the onDispose callback last — listeners (like the refresher)
+        // should see the panel truly gone before they react.
+        this.opts.onDispose?.();
     }
 
     // ── private ──────────────────────────────────────────────────────────────
@@ -148,7 +165,7 @@ export class DashboardPanel {
                 }
                 // Signal extension.ts that it can now start computing and
                 // pushing state if it wants to.
-                this.onReady?.();
+                this.opts.onReady?.();
                 break;
             default:
                 this.output.appendLine(`[sandboxDashboard] unknown message: ${JSON.stringify(msg)}`);

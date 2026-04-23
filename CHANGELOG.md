@@ -23,8 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **ContainerLab status** — whether the CLI is available, how
     many labs are currently deployed (via `containerlab inspect
     --all --format json`), and when the status was last checked
-  State is computed once on activation or command invocation; M2.3
-  adds file-watcher + polling reactivity.
+- **Reactive state updates (M2.3).** The dashboard now stays fresh
+  without user intervention:
+  - **File watchers** on `*.clab.yml` / `*.clab.yaml` — create,
+    change, and delete events trigger a recompute. A new topology
+    file appears in the dashboard within ~300ms of being saved.
+  - **ContainerLab polling** every 30 seconds while the dashboard
+    is open. Deploy a lab via terminal and the dashboard reflects
+    it within half a minute. Polling pauses when the dashboard is
+    closed to avoid wasted CPU.
+  - **Debouncing** coalesces rapid-fire file-system events (editors
+    often emit 3-5 events per save) into a single recompute via a
+    300ms window.
+  - **Latest-wins race safety** via a monotonic token — if a fast
+    compute starts while a slow compute is in flight, the slow
+    result gets dropped when it resolves so stale state never
+    overwrites fresh state.
 
 ### Changed
 - **Webview is now script-enabled under a strict Content Security
@@ -33,10 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `script-src` locked to a per-render nonce. External scripts,
   eval, and unnonced inline scripts are all blocked.
 - **Extension refactored into purpose-built modules.** `extension.ts`
-  is now a lean glue module; `webview.ts` owns panel lifecycle, HTML
-  rendering, and the message channel; `types.ts` is the shared type
-  surface; `state.ts` computes workspace state; `containerlab.ts`
-  wraps CLI inspection.
+  is lean glue; `webview.ts` owns panel lifecycle, HTML rendering,
+  and the message channel; `types.ts` is the shared type surface;
+  `state.ts` computes workspace state; `containerlab.ts` wraps CLI
+  inspection; `refresher.ts` is the reactivity engine (watchers,
+  polling, debounce, race-safety).
 
 ### Internal
 - Message protocol between extension and webview established with a
@@ -54,12 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state's `error` field rather than crashing.
 - All user-controlled string values (workspace paths, topology paths,
   lab names) HTML-escaped before DOM insertion in the webview.
+- `DashboardPanel` accepts `onReady` and `onDispose` callbacks via an
+  options object, letting cross-module concerns (like the refresher's
+  poll lifecycle) hook in without coupling the webview module to them.
 
 ### Notes
-- The visible UI now shows real state. Buttons (Import / Start /
-  Save / Export) still land in Milestone 3. Reactivity — watching
-  for topology file changes, polling containerlab status — lands in
-  M2.3.
+- Buttons (Import / Start / Save / Export) still land in Milestone 3.
+  M2 builds the *observation* layer that M3's *action* layer will
+  build on top of.
 - Pairs with `lab-base-sandbox` 1.0.1 (to be cut at end of M2).
 
 
