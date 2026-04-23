@@ -5,7 +5,140 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - 2026-04-23
+## [0.3.0] - 2026-04-23
+
+Milestone 3 — **the four buttons**. The dashboard is no longer
+just an observer; it's a fully functional control plane for the
+sandbox lab lifecycle.
+
+### Added
+- **Import action.** Pick a `.tar.gz` / `.tgz` with the file
+  picker; the action reads the tarball's top-level entries via
+  `tar -tzf` and compares them against what's already in the
+  workspace. Any collisions surface in a modal warning (first
+  5 names listed verbatim, overflow summarized as "… (+N more)")
+  with Overwrite / Cancel. Files already in the workspace but
+  not in the tarball are preserved — this is a merge, not a
+  replace, and the warning says so. Extraction via
+  `tar -xzf -C <workspaceRoot>` with progress notification.
+  Dashboard refreshes automatically once extraction completes
+  because M2's file watchers pick up any new `*.clab.yml`.
+- **Start action.** Discovers `*.clab.yml` / `*.clab.yaml` in the
+  workspace. Zero files → explainer toast. One file → uses it.
+  Multiple files → `showQuickPick` with basenames + relative
+  paths. Deploys via `sudo -n containerlab deploy -t <path>`
+  with progress notification; stdout/stderr are streamed to the
+  Output channel line-by-line AND surfaced as the progress toast
+  message, so users see "Creating container clab-foo-bar" etc.
+  live. On success, triggers an immediate dashboard refresh via
+  the new `sandboxDashboard.refresh` command — the new lab
+  surfaces within ~1 second instead of waiting up to 30s for the
+  next containerlab poll tick. Sudo-auth failures get a pointed
+  "passwordless sudo not configured" toast instead of forcing the
+  user to parse sudo's own prose.
+- **Save action.** Two-phase: first `sudo -n containerlab save
+  -t <topology>` captures the running configs of every node into
+  `clab-<labname>/<nodename>/` directories; then bundles the
+  whole workspace into a `.tar.gz` — keeping the `clab-*`
+  directories this time because those hold the point of Save.
+  If multiple labs are deployed, a picker lets the user choose;
+  one lab uses it silently. Partial-success path: if configs
+  capture cleanly but the user then cancels the save dialog, we
+  toast "Configs captured; tarball skipped — you can Export
+  anytime" instead of treating it as a failure. Same sudo-auth
+  hint as Start when applicable.
+- **Export action.** Bundles the workspace as `.tar.gz` via
+  `tar -czf --exclude=./.git --exclude=./node_modules
+  --exclude=./clab-* -C <workspaceRoot> .`. `showSaveDialog`
+  defaults to `$HOME/<workspace-name>-YYYY-MM-DD-HHMM.tar.gz`.
+  Success toast has a "Reveal in File Explorer" follow-up that
+  calls VS Code's `revealFileInOS` command (cross-platform:
+  Finder / Explorer / xdg-open). Exclusions are opinionated and
+  minimal; `.vscode/`, `.devcontainer/`, and `*.log` are
+  deliberately INCLUDED because sandbox labs ship useful content
+  in those paths.
+- **`sandboxDashboard.refresh` command.** Forces an immediate
+  state recompute independent of the 30s poll cycle. Used
+  internally by Start to surface new labs quickly; also exposed
+  in the command palette as "Sandbox Dashboard: Refresh" for
+  manual use.
+- **Action buttons in the dashboard.** New "Actions" section at
+  the top of the webview with Import / Start / Save / Export
+  buttons styled via VS Code's `--vscode-button-*` theme tokens
+  so they read as native controls in every theme.
+- **Preconditional button enablement.** All four buttons
+  correctly grey out when their preconditions aren't met:
+  - Export, Import: disabled with no open workspace
+  - Start: disabled with no `*.clab.yml` in the workspace
+  - Save: disabled with no deployed lab
+  Updates live on every state push — the moment the last lab
+  is destroyed, Save dims without the user needing to refresh.
+
+### Changed
+- **Actions split into per-file modules under `src/actions/`.**
+  0.2.x shipped a single `src/actions.ts` with all four as
+  stubs. Each action now lives in `src/actions/<kind>.ts` with
+  a barrel at `src/actions/index.ts` re-exporting the real
+  implementations. `extension.ts`'s imports didn't change —
+  `from './actions'` resolves to the barrel automatically.
+- **`runTar` signature parameterized.** The tarball-bundling
+  helper previously used a module-level `TAR_EXCLUDES` constant.
+  It's now exported from `./export.ts` with a `readonly string[]`
+  excludes parameter so Save can reuse the same code with a
+  shorter exclude list (keeping `clab-*`). `DEFAULT_EXPORT_EXCLUDES`
+  and `DEFAULT_SAVE_EXCLUDES` are both exported constants.
+- **All four action commands declared in `contributes.commands`**
+  for command-palette discoverability. Reachable from the
+  palette, keybindings, or the webview buttons — same
+  implementation, three entry points.
+
+### Internal
+- **Build-time syntax check for the emitted webview script.**
+  `scripts/check-webview-script.js` runs after every `npm run
+  bundle` (wired as a `postbundle` npm script). It loads the
+  bundled extension with a mocked `vscode` module, captures the
+  HTML emitted by `DashboardPanel.buildHtml()`, extracts the
+  inline `<script>` body, and runs `node --check` on a temp file.
+  Fails loudly with a line number on any JS syntax error. This
+  is the guardrail that would have caught the v0.2.0 → v0.2.1
+  hotfix at build time. Verified by re-injecting the 0.2.0 bug
+  during development and confirming the check flagged it.
+- **Layered syntax defense now covers both TypeScript and
+  runtime JS.** `tsc --noEmit` protects against TypeScript
+  parse errors including template-literal termination issues
+  (caught a stray-backtick bug during M3.5); `node --check` on
+  the emitted webview body protects against runtime-visible JS
+  syntax bugs the TS compiler can't see inside string literals
+  (caught the v0.2.0 backslash bug). Both fire in sequence on
+  every bundle.
+- **`sudo -n containerlab ...` defense pattern.** All privileged
+  containerlab invocations use `-n` (non-interactive sudo). If
+  passwordless sudo isn't configured, sudo fails fast with a
+  clear diagnostic instead of hanging forever on a password
+  prompt the webview can't service. Failure-message pattern-
+  matching surfaces this as a "passwordless sudo not configured
+  for containerlab" toast rather than forcing the user to parse
+  sudo's own prose.
+- **Line-buffered output streaming from `spawn`.** Start and
+  Save both have to forward containerlab's chatter line-by-line
+  to both the Output channel and the progress toast message.
+  Each implements a small manual line-buffer since stdout chunks
+  from Node don't arrive aligned to newlines. Trailing partial
+  lines are flushed on `close`.
+
+### Notes
+- Pairs with `lab-base-sandbox` 1.0.4 (to be cut immediately
+  after this release).
+- Import has no rename-on-collision mode. If a user wants to
+  preserve their existing workspace while importing, they can
+  extract to a subfolder externally. Deliberately non-configurable
+  for M3.
+- Start has no Destroy pair. Destroy is a separate concern and
+  is a candidate for M4.
+- No deploy flags (`--reconfigure`, `--max-workers`, `--vars`).
+  Can be added as a QuickPick modifier or VS Code setting later.
+
+
 
 ### Fixed
 - **Dashboard no longer falsely reports `containerlab inspect

@@ -6,31 +6,27 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.2.1 — live workspace awareness (hotfix).** The dashboard observes the workspace in real time. Lifecycle buttons land in Milestone 3.
+**v0.3.0 — the four buttons.** The dashboard is now a full lifecycle control plane for UCN Sandbox labs. Observe the workspace, deploy topologies, capture running configs, export tarballs, import lab bundles — all without leaving the IDE.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
 | **M1** | ✅ Shipped | Marketplace identity, command routing, status bar button, container image pairing, publish pipeline |
 | **M2** | ✅ Shipped | Auto-open on first activation, workspace status, topology detection, containerlab inspection, live reactivity, display polish |
-| M3 | Planned | The four buttons: Import / Start / Save / Export |
-| M4 | Planned | Polish, confirmations, richer error handling |
+| **M3** | ✅ Shipped | The four buttons: Import / Start / Save / Export; preconditional enablement; build-time webview syntax guardrail |
+| M4 | Planned | Destroy action, confirmation flows, richer error handling |
 
-### Starting context for M3
+### M3 recap
 
-Before any button work, M3 opens with a **build-time syntax check on the emitted webview script**. The v0.2.0 → v0.2.1 hotfix was caused by a malformed string literal in the inline `<script>` block that killed the entire webview JS (and with it, the `ready` handshake) — undetectable by `tsc`, undetectable by `esbuild`, only caught by end-to-end smoke test in a real lab. The fix was trivial (2 chars); the diagnosis was not.
+1. **M3.0** — build-time syntax check on the emitted webview script. `scripts/check-webview-script.js` runs after every bundle, loads the bundled extension with a mock `vscode`, captures the HTML emitted by `DashboardPanel.buildHtml()`, extracts the inline `<script>` body, and runs `node --check` on it. Catches runtime-visible JS syntax errors at build time. Combined with `tsc --noEmit`, both TypeScript-level and emitted-JS-level syntax issues are caught before shipping.
+2. **M3.1** — action message plumbing. Webview buttons send `{type:'action', payload:{kind}}` messages; the extension dispatcher translates to `sandboxDashboard.<kind>` VS Code commands. Same dispatch path used by command palette entries, so actions are reachable from buttons, keybindings, and the palette uniformly.
+3. **M3.2** — Export. `tar -czf` with opinionated exclusions (`.git`, `node_modules`, `clab-*`). Default filename `<workspace-name>-YYYY-MM-DD-HHMM.tar.gz` in `$HOME`.
+4. **M3.3** — Import. `tar -tzf` for collision detection; modal confirmation listing conflicts (first 5 verbatim, overflow summarized); `tar -xzf -C <workspaceRoot>` to extract. File watchers pick up new topologies automatically.
+5. **M3.4** — Start. `sudo -n containerlab deploy -t <topology>` with line-streamed progress notification ("Creating container clab-foo-bar", etc.). Topology QuickPick when multiple `*.clab.yml` files exist. Triggers `sandboxDashboard.refresh` on success so the new lab surfaces within ~1 second instead of waiting up to 30s for the poll tick.
+6. **M3.5** — Save. Two-phase: `sudo -n containerlab save` first (writes configs into `clab-*/<nodename>/`), then bundles with a shorter exclude list that keeps those directories. Partial-success path: if configs capture cleanly but the user cancels the save dialog, we toast "Configs captured; tarball skipped — you can Export anytime" instead of treating it as a failure.
 
-Plan: add `scripts/check-webview-script.js` that loads the bundled extension with a mock `vscode`, captures the HTML emitted by `DashboardPanel.buildHtml()`, extracts the `<script>` body, and runs `node --check` on it. Wire into `npm run bundle` as a post-step so every future bundle either ships with a valid webview script or fails loudly at build time. Mirrors the `OPEN_VSX_TOKEN` pre-flight pattern: turn a class of silent-in-prod bug into a loud-at-build error.
+All privileged containerlab calls use `sudo -n` (non-interactive). An unconfigured NOPASSWD sudo fails fast with a clear diagnostic instead of hanging forever on a password prompt the webview can't service.
 
-Only then proceed to the four buttons:
-
-1. **Import** — file picker → tarball → extract into workspace (with confirm-overwrite if a lab is already present).
-2. **Start** — detect topology file (picker if multiple) → `containerlab deploy` → state refreshes show live lab.
-3. **Save** — `containerlab save` on running lab + bundle workspace files into a download-ready tarball.
-4. **Export** — bundle current workspace state into a tarball, no deploy-state involvement.
-
-Buttons flow as `{ type: 'action', payload: { kind, ... } }` webview-to-extension messages — the reverse direction on the already-working message protocol. State channel unchanged; M2's observer keeps running under M3's actions.
-
-## What the dashboard shows (v0.2.0)
+## What the dashboard shows (v0.3.0)
 
 Open a sandbox lab workspace and the dashboard auto-opens with three live sections:
 
@@ -60,22 +56,35 @@ For development or out-of-lab use, install from the published `.vsix` on the [Gi
 | Command | Description |
 |---------|-------------|
 | `Sandbox Dashboard: Open` | Open or focus the dashboard webview. |
+| `Sandbox Dashboard: Refresh` | Force an immediate state recompute without waiting for the 30s poll tick. |
+| `Sandbox Dashboard: Import Lab from Tarball` | Pick a `.tar.gz` and extract it into the current workspace (with collision confirmation). |
+| `Sandbox Dashboard: Start Lab` | Deploy a `*.clab.yml` via `containerlab deploy`. Picker appears if multiple topologies exist. |
+| `Sandbox Dashboard: Save Lab (Capture Configs + Export)` | Run `containerlab save` on a deployed lab, then bundle the workspace as a tarball. |
+| `Sandbox Dashboard: Export Workspace as Tarball` | Bundle the workspace as a `.tar.gz` without touching running state. |
 
-(More commands land in Milestone 3 alongside the dashboard buttons.)
+All actions are also reachable via the four buttons at the top of the dashboard; the command palette entries exist so keyboard-driven workflows work too.
 
 ## Architecture
 
 ```
 src/
-  extension.ts     glue — activation, status bar, commands, auto-open policy
-  webview.ts       panel lifecycle, HTML, CSP, message protocol
-  refresher.ts     reactivity engine (watchers, polling, debounce, race safety)
-  state.ts         workspace state computation
-  containerlab.ts  CLI wrapper (defensive JSON parsing)
-  types.ts         shared types (state + messages)
+  extension.ts        glue — activation, status bar, commands, auto-open policy
+  webview.ts          panel lifecycle, HTML, CSP, message protocol, button UI
+  refresher.ts        reactivity engine (watchers, polling, debounce, race safety)
+  state.ts            workspace state computation
+  containerlab.ts     CLI wrapper (defensive JSON parsing)
+  types.ts            shared types (state + messages + ActionKind)
+  actions/
+    index.ts          barrel re-exporting the four action runners
+    export.ts         Export + shared tar helper (runTar, timestamp, excludes)
+    import.ts         Import with collision detection
+    start.ts          Start with topology picker + progress streaming
+    save.ts           Save (containerlab save + tarball, reuses runTar)
+scripts/
+  check-webview-script.js   build-time JS-syntax guardrail on emitted webview script
 ```
 
-The webview is a pure renderer. The extension host computes authoritative state and pushes it as `{ type: 'state', payload }` messages; the webview just reflects what it was told. This pattern scales cleanly — M3's buttons will flow the other direction as `{ type: 'action', payload }` messages without changing the state channel.
+The webview is a pure renderer. The extension host computes authoritative state and pushes it as `{ type: 'state', payload }` messages; the webview reflects what it was told. Button clicks flow the reverse direction as `{ type: 'action', payload: { kind } }` messages, which the extension dispatcher translates to `sandboxDashboard.<kind>` VS Code commands. State channel and action channel are independent — actions run while M2's observer keeps the display honest.
 
 ## Building from source
 
