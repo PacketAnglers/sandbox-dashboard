@@ -671,6 +671,11 @@ export class DashboardPanel {
             function updateButtonEnablement(state) {
                 const hasWorkspace = !!(state && state.workspaceRoot);
                 const hasTopology = !!(state && state.topologies && state.topologies.length > 0);
+                const hasDeployedLab = !!(
+                    state && state.containerlab &&
+                    state.containerlab.deployedLabs &&
+                    state.containerlab.deployedLabs.length > 0
+                );
 
                 // Export & Import: both need a workspace to exist. Export has
                 // to have something to bundle; Import has to have somewhere
@@ -684,9 +689,10 @@ export class DashboardPanel {
                 // a greyed-out button.
                 setDisabled('action-start', !hasWorkspace || !hasTopology);
 
-                // Save: still permissive. M3.5 will tighten to disable when
-                // state.containerlab.deployedLabs.length === 0.
-                setDisabled('action-save', false);
+                // Save: needs a deployed lab — 'containerlab save' has
+                // nothing to capture from an empty host. Button greys out
+                // the moment the last lab is destroyed.
+                setDisabled('action-save', !hasWorkspace || !hasDeployedLab);
             }
 
             function setDisabled(id, disabled) {

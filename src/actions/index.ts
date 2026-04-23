@@ -10,42 +10,25 @@
  *
  * LAYOUT
  * ──────
- * This is the barrel. Each action lives in its own file once it grows
- * a real implementation; the barrel re-exports them so extension.ts
- * can `import { runX } from './actions'` without caring about the
- * per-file split.
+ * This is the barrel. Each action lives in its own file under
+ * src/actions/; the barrel re-exports so extension.ts can
+ * `import { runX } from './actions'` without caring about the split.
  *
- * Stubs for actions that haven't landed yet live inline at the bottom
- * of this file — kept minimal so the file stays readable as each
- * action graduates to its own module.
+ * MILESTONE MAP (all shipped as of v0.3.0)
+ * ──────────────
+ *   M3.1: all four as stubs
+ *   M3.2: runExport → ./export.ts
+ *   M3.3: runImport → ./import.ts
+ *   M3.4: runStart  → ./start.ts
+ *   M3.5: runSave   → ./save.ts   (reuses runTar from ./export)
  *
- * MILESTONE MAP
- * ─────────────
- *   M3.1: all four as stubs (shipped)
- *   M3.2: runExport moves to ./export.ts (THIS COMMIT)
- *   M3.3: runImport moves to ./import.ts
- *   M3.4: runStart moves to ./start.ts
- *   M3.5: runSave moves to ./save.ts (delegates to runExport for tarball)
+ * Shared helpers (tarball exec, timestamp, default dir) live in
+ * ./export.ts and are exported for reuse by ./save.ts. This avoids
+ * a separate "utils" file for code that would otherwise have one
+ * caller besides its own.
  */
-
-import * as vscode from 'vscode';
 
 export { runExport } from './export';
 export { runImport } from './import';
 export { runStart } from './start';
-
-// ─── Stubs for actions not yet implemented ──────────────────────────────────
-
-/**
- * Save — capture running configs via `containerlab save`, then bundle
- * the workspace as a tarball for download.
- * Real implementation lands in M3.5 and will delegate the tarball
- * portion to runExport's helpers.
- */
-export async function runSave(
-    _context: vscode.ExtensionContext,
-    output: vscode.OutputChannel,
-): Promise<void> {
-    output.appendLine('[sandboxDashboard] action: save (stub, coming in M3.5)');
-    vscode.window.showInformationMessage('Save — coming in M3.5');
-}
+export { runSave } from './save';

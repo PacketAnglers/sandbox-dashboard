@@ -32,13 +32,27 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 
 /**
- * Excludes passed to `tar --exclude=<pattern>`. Patterns are tar's
- * glob syntax, not shell globs.
+ * Default tar exclude patterns for Export. Patterns are tar's glob
+ * syntax, not shell globs.
+ *
+ * Exported so Save (M3.5) can construct its own exclude list — Save
+ * wants to include clab-* (that's where `containerlab save` writes
+ * running configs), so it uses a shorter subset.
  */
-const TAR_EXCLUDES = [
+export const DEFAULT_EXPORT_EXCLUDES = [
     './.git',
     './node_modules',
     './clab-*',
+];
+
+/**
+ * Tar exclude patterns for Save. Same as Export but KEEPS clab-*
+ * directories, since those hold the captured running configs that
+ * are the whole point of Save.
+ */
+export const DEFAULT_SAVE_EXCLUDES = [
+    './.git',
+    './node_modules',
 ];
 
 export async function runExport(
@@ -97,7 +111,7 @@ export async function runExport(
                 title: 'Exporting workspace…',
                 cancellable: false,
             },
-            () => runTar(workspaceRoot, targetPath, output),
+            () => runTar(workspaceRoot, targetPath, DEFAULT_EXPORT_EXCLUDES, output),
         );
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -129,19 +143,34 @@ export async function runExport(
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 /**
- * Spawn `tar` with the configured excludes and workspace root.
+ * Spawn `tar` to bundle a workspace into a gzipped tarball.
  *
- * Resolves on exit code 0, rejects with a stderr-derived message otherwise.
- * Uses argv (not shell) so paths with metachars are safe without quoting.
+ * Parameters:
+ *   workspaceRoot — absolute path to the directory to bundle. tar `cd`s
+ *                   into this with `-C`, so the tarball is rooted here.
+ *   targetPath    — absolute path where the .tar.gz should be written.
+ *   excludes      — tar glob patterns (not shell globs). See the
+ *                   DEFAULT_EXPORT_EXCLUDES / DEFAULT_SAVE_EXCLUDES
+ *                   constants for the two in-tree call sites.
+ *   output        — channel for the command echo and stderr dump.
+ *
+ * Resolves on exit code 0, rejects with a stderr-derived message
+ * otherwise. Uses argv (not shell) so paths with metachars are safe
+ * without quoting.
+ *
+ * Exported so Save (M3.5) can reuse it with a shorter exclude list —
+ * Save needs clab-* directories included because that's where
+ * `containerlab save` writes running configs.
  */
-function runTar(
+export function runTar(
     workspaceRoot: string,
     targetPath: string,
+    excludes: readonly string[],
     output: vscode.OutputChannel,
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         const args: string[] = ['-czf', targetPath];
-        for (const ex of TAR_EXCLUDES) {
+        for (const ex of excludes) {
             args.push(`--exclude=${ex}`);
         }
         // -C <root> tells tar to cd into the workspace first, then '.' means
@@ -186,8 +215,8 @@ function runTar(
     });
 }
 
-/** ISO-ish timestamp suitable for filenames: YYYY-MM-DD-HHMM */
-function timestamp(): string {
+/** ISO-ish timestamp suitable for filenames: YYYY-MM-DD-HHMM. Exported for Save. */
+export function timestamp(): string {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
@@ -197,7 +226,9 @@ function timestamp(): string {
  * Best-effort default directory for the save dialog's initial location.
  * On Linux (including our sandbox container), $HOME is universally
  * available. Falls back to workspace root if something's weird.
+ *
+ * Exported for Save.
  */
-function getDefaultDir(): string {
+export function getDefaultDir(): string {
     return process.env.HOME || process.env.USERPROFILE || process.cwd();
 }
