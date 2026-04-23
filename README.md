@@ -11,9 +11,21 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
 | **M1** | ✅ Shipped | Marketplace identity, command routing, status bar button, container image pairing, publish pipeline |
-| M2 | Planned | Workspace status + topology detection |
+| M2 | Planned | Auto-open on lab boot, workspace status + topology detection |
 | M3 | Planned | The four buttons: Import / Start / Save / Export |
 | M4 | Planned | Polish, confirmations, error handling |
+
+## Backlog
+
+Observations captured during M1 smoke-testing that are queued for later milestones:
+
+- **Auto-open on lab boot** (M2). Today the dashboard opens only when the
+  user clicks the `$(beaker) Sandbox Dashboard` status bar button. Techlib
+  labs auto-open their dashboard via a file-watcher on `LAB-READY.md`, but
+  sandbox labs have no equivalent readiness signal — they're
+  user-driven from boot. A first-activation open (with
+  `context.workspaceState` tracking so repeated restarts don't
+  re-pester) is the likely shape.
 
 ## Installation
 
