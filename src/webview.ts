@@ -670,6 +670,7 @@ export class DashboardPanel {
 
             function updateButtonEnablement(state) {
                 const hasWorkspace = !!(state && state.workspaceRoot);
+                const hasTopology = !!(state && state.topologies && state.topologies.length > 0);
 
                 // Export & Import: both need a workspace to exist. Export has
                 // to have something to bundle; Import has to have somewhere
@@ -677,11 +678,14 @@ export class DashboardPanel {
                 setDisabled('action-export', !hasWorkspace);
                 setDisabled('action-import', !hasWorkspace);
 
-                // Start / Save: still permissive. M3.4/M3.5 will tighten:
-                //   - Start: disabled when state.topologies.length === 0
-                //   - Save:  disabled when state.containerlab.deployedLabs
-                //            .length === 0
-                setDisabled('action-start', false);
+                // Start: needs at least one *.clab.yml to deploy. Leaving
+                // this enabled with zero topologies would just surface the
+                // runStart action's bail-out toast, which is worse UX than
+                // a greyed-out button.
+                setDisabled('action-start', !hasWorkspace || !hasTopology);
+
+                // Save: still permissive. M3.5 will tighten to disable when
+                // state.containerlab.deployedLabs.length === 0.
                 setDisabled('action-save', false);
             }
 

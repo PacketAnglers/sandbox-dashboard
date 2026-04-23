@@ -84,6 +84,16 @@ export function activate(context: vscode.ExtensionContext) {
             output.appendLine('[sandboxDashboard] open command invoked');
             openAndRefresh(context, output, refresher);
         }),
+        vscode.commands.registerCommand('sandboxDashboard.refresh', () => {
+            // Immediate state refresh. Used by Start/Save so deploy/save
+            // results surface in the dashboard within ~a second rather
+            // than waiting up to 30s for the next containerlab poll tick.
+            // No-op effect on UI if the dashboard panel isn't open — the
+            // computed state is kept as `lastState` and replayed on the
+            // next open.
+            output.appendLine('[sandboxDashboard] refresh command invoked');
+            refresher.schedule('refresh command');
+        }),
         vscode.commands.registerCommand('sandboxDashboard.import', () => runImport(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.start',  () => runStart(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),

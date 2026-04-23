@@ -32,20 +32,9 @@ import * as vscode from 'vscode';
 
 export { runExport } from './export';
 export { runImport } from './import';
+export { runStart } from './start';
 
 // ─── Stubs for actions not yet implemented ──────────────────────────────────
-
-/**
- * Start — deploy the workspace's topology via `containerlab deploy`.
- * Real implementation lands in M3.4.
- */
-export async function runStart(
-    _context: vscode.ExtensionContext,
-    output: vscode.OutputChannel,
-): Promise<void> {
-    output.appendLine('[sandboxDashboard] action: start (stub, coming in M3.4)');
-    vscode.window.showInformationMessage('Start — coming in M3.4');
-}
 
 /**
  * Save — capture running configs via `containerlab save`, then bundle
