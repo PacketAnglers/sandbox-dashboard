@@ -1,0 +1,54 @@
+{
+  "name": "sandbox-dashboard",
+  "displayName": "Sandbox Dashboard",
+  "description": "Dashboard for UCN Sandbox labs — import, start, save, export. Built for aclabs / Arista Containerized Labs.",
+  "version": "0.1.0",
+  "publisher": "packetanglers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PacketAnglers/sandbox-dashboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PacketAnglers/sandbox-dashboard/issues"
+  },
+  "homepage": "https://github.com/PacketAnglers/sandbox-dashboard#readme",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "containerlab",
+    "arista",
+    "aclabs",
+    "sandbox"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sandboxDashboard.open",
+        "title": "Sandbox Dashboard: Open"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run bundle && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.3.3"
+  }
+}

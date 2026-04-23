@@ -1,0 +1,100 @@
+name: build-and-release
+
+# Builds the extension on every push/PR, so we catch breakage early.
+# On tag push (v*.*.*), ALSO creates a GitHub Release with the .vsix attached.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the Release and upload the .vsix asset
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify package version matches tag (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Tag and package.json agree on version $PKG_VERSION"
+
+      - name: Build bundle
+        run: npm run bundle
+
+      - name: Package .vsix
+        run: npx vsce package --no-dependencies
+
+      - name: Upload .vsix as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-dashboard-vsix
+          path: '*.vsix'
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Check Open VSX credentials
+        # Surfaces whether publishing will run, so maintainers can see in the
+        # UI without digging into conditional logic.
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: ovsx_check
+        env:
+          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
+        run: |
+          if [ -n "$OPEN_VSX_TOKEN" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Open VSX token configured — will publish."
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Open VSX token NOT configured — skipping publish."
+          fi
+
+      - name: Resolve vsix filename for publishing
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: vsix
+        run: |
+          # vsce produces sandbox-dashboard-<version>.vsix (no 'v' prefix).
+          VSIX_PATH=$(ls ./sandbox-dashboard-*.vsix | head -n1)
+          if [ -z "$VSIX_PATH" ] || [ ! -f "$VSIX_PATH" ]; then
+            echo "::error::Could not find .vsix file in repo root"
+            exit 1
+          fi
+          echo "path=$VSIX_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found vsix: $VSIX_PATH"
+
+      - name: Publish to Open VSX Registry (tag builds only)
+        if: steps.ovsx_check.outputs.publish == 'true'
+        uses: HaaLeo/publish-vscode-extension@v2
+        with:
+          pat: ${{ secrets.OPEN_VSX_TOKEN }}
+          extensionFile: ${{ steps.vsix.outputs.path }}
