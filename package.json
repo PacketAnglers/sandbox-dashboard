@@ -44,6 +44,10 @@
         "title": "Sandbox Dashboard: Start Lab"
       },
       {
+        "command": "sandboxDashboard.stop",
+        "title": "Sandbox Dashboard: Stop Lab"
+      },
+      {
         "command": "sandboxDashboard.save",
         "title": "Sandbox Dashboard: Save Lab (Capture Configs + Export)"
       },

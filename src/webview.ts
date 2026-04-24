@@ -424,6 +424,9 @@ export class DashboardPanel {
             <button type="button" class="action-btn" data-action="start" id="action-start">
                 <span class="icon">▶️</span>Start
             </button>
+            <button type="button" class="action-btn" data-action="stop" id="action-stop">
+                <span class="icon">🛑</span>Stop
+            </button>
             <button type="button" class="action-btn" data-action="save" id="action-save">
                 <span class="icon">💾</span>Save
             </button>
@@ -689,10 +692,12 @@ export class DashboardPanel {
                 // a greyed-out button.
                 setDisabled('action-start', !hasWorkspace || !hasTopology);
 
-                // Save: needs a deployed lab — 'containerlab save' has
-                // nothing to capture from an empty host. Button greys out
-                // the moment the last lab is destroyed.
+                // Save & Stop: both need a deployed lab. The moment the
+                // last lab is destroyed, both buttons grey out together.
+                // Save captures configs from a running lab; Stop tears
+                // down a running lab. Neither has work to do otherwise.
                 setDisabled('action-save', !hasWorkspace || !hasDeployedLab);
+                setDisabled('action-stop', !hasWorkspace || !hasDeployedLab);
             }
 
             function setDisabled(id, disabled) {

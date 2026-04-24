@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { runExport, runImport, runSave, runStart } from './actions';
+import { runExport, runImport, runSave, runStart, runStop } from './actions';
 import { StateRefresher } from './refresher';
 import { showDashboard } from './webview';
 
@@ -96,6 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('sandboxDashboard.import', () => runImport(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.start',  () => runStart(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.stop',   () => runStop(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.export', () => runExport(context, output)),
     );

@@ -54,6 +54,7 @@ import {
     runTar,
     timestamp,
 } from './export';
+import { inspectDeployedLabs } from './_helpers';
 
 export async function runSave(
     _context: vscode.ExtensionContext,
@@ -199,113 +200,6 @@ export async function runSave(
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Minimal record of a currently-deployed lab, for the picker.
- * This intentionally doesn't reuse the DeployedLab type from types.ts —
- * keeping Save self-contained makes it trivially obvious what fields
- * it needs, and the type is tiny.
- */
-interface SavableLab {
-    name: string;
-    topologyPath: string;
-    nodeCount: number;
-}
-
-/**
- * Ask containerlab for the list of currently-deployed labs.
- * Uses `sudo -n containerlab inspect --all --format json`.
- *
- * Returns [] if containerlab is unavailable, if no labs are deployed,
- * or if anything goes wrong — Save treats all three cases the same
- * (no lab to save, show the explainer toast). The output channel logs
- * the reason for diagnosability.
- */
-async function inspectDeployedLabs(output: vscode.OutputChannel): Promise<SavableLab[]> {
-    return new Promise((resolve) => {
-        // No -n here — `containerlab inspect` is sometimes available to the
-        // user without sudo, and if it needs sudo we'd rather the failure
-        // mode be "no lab found" than "save bails on password prompt". The
-        // Start action uses sudo -n because deploy always needs root; inspect
-        // is more forgiving in practice.
-        const child = spawn('containerlab', ['inspect', '--all', '--format', 'json'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-
-        let stdoutBuf = '';
-        let stderrBuf = '';
-        child.stdout.on('data', (c) => { stdoutBuf += c.toString(); });
-        child.stderr.on('data', (c) => { stderrBuf += c.toString(); });
-
-        child.on('error', (err) => {
-            output.appendLine(`[sandboxDashboard] inspect spawn error: ${err.message}`);
-            resolve([]);
-        });
-
-        child.on('close', (code) => {
-            if (code !== 0) {
-                output.appendLine(`[sandboxDashboard] inspect exit ${code}: ${stderrBuf.trim()}`);
-                resolve([]);
-                return;
-            }
-            const trimmed = stdoutBuf.trim();
-            if (!trimmed) { resolve([]); return; }
-
-            let parsed: unknown;
-            try { parsed = JSON.parse(trimmed); } catch (err) {
-                output.appendLine(`[sandboxDashboard] inspect JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
-                resolve([]);
-                return;
-            }
-            resolve(extractLabs(parsed));
-        });
-    });
-}
-
-/**
- * Extract SavableLab records from containerlab's inspect output.
- *
- * Mirrors the shape-recognition logic in src/containerlab.ts (supports
- * bare array, { containers: [] }, keyed-by-lab, empty object) but
- * returns the lightweight SavableLab struct instead of the fuller
- * DeployedLab. Kept local so Save doesn't import the state module
- * and create a circular-ish dependency between actions and state
- * computation.
- */
-function extractLabs(parsed: unknown): SavableLab[] {
-    let containers: unknown[] = [];
-    if (Array.isArray(parsed)) {
-        containers = parsed;
-    } else if (parsed !== null && typeof parsed === 'object') {
-        const obj = parsed as Record<string, unknown>;
-        if (Array.isArray(obj.containers)) {
-            containers = obj.containers;
-        } else {
-            // keyed-by-lab shape: flatten all values that are arrays.
-            for (const v of Object.values(obj)) {
-                if (Array.isArray(v)) containers.push(...v);
-            }
-        }
-    }
-
-    const byLab = new Map<string, SavableLab>();
-    for (const entry of containers) {
-        if (entry === null || typeof entry !== 'object') continue;
-        const rec = entry as Record<string, unknown>;
-        const labName = typeof rec.lab_name === 'string' ? rec.lab_name
-            : typeof rec.labName === 'string' ? rec.labName : undefined;
-        if (!labName) continue;
-        const topologyPath = typeof rec.labPath === 'string' ? rec.labPath
-            : typeof rec.lab_path === 'string' ? rec.lab_path : '';
-        const existing = byLab.get(labName);
-        if (existing) {
-            existing.nodeCount += 1;
-        } else {
-            byLab.set(labName, { name: labName, topologyPath, nodeCount: 1 });
-        }
-    }
-    return Array.from(byLab.values());
-}
 
 /**
  * Spawn `sudo -n containerlab save -t <topology>`.

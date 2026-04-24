@@ -31,4 +31,5 @@
 export { runExport } from './export';
 export { runImport } from './import';
 export { runStart } from './start';
+export { runStop } from './stop';
 export { runSave } from './save';
