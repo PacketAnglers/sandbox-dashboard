@@ -424,6 +424,9 @@ export class DashboardPanel {
             <button type="button" class="action-btn" data-action="start" id="action-start">
                 <span class="icon">▶️</span>Start
             </button>
+            <button type="button" class="action-btn" data-action="topologyView" id="action-topology-view">
+                <span class="icon">🗺️</span>Topology View
+            </button>
             <button type="button" class="action-btn" data-action="stop" id="action-stop">
                 <span class="icon">🛑</span>Stop
             </button>
@@ -686,11 +689,16 @@ export class DashboardPanel {
                 setDisabled('action-export', !hasWorkspace);
                 setDisabled('action-import', !hasWorkspace);
 
-                // Start: needs at least one *.clab.yml to deploy. Leaving
-                // this enabled with zero topologies would just surface the
-                // runStart action's bail-out toast, which is worse UX than
-                // a greyed-out button.
-                setDisabled('action-start', !hasWorkspace || !hasTopology);
+                // Start: needs a workspace. The runStart action has a
+                // three-step topology resolver:
+                //   1. Session memory (remembered manual pick)
+                //   2. Glob discovery (*.clab.yml / *.clab.yaml)
+                //   3. Fallback file picker (for non-standard filenames)
+                // That means Start is useful even with zero glob matches,
+                // so we don't disable on !hasTopology anymore. The
+                // hasTopology signal still informs the Topologies SECTION
+                // display, just not this button's enablement.
+                setDisabled('action-start', !hasWorkspace);
 
                 // Save & Stop: both need a deployed lab. The moment the
                 // last lab is destroyed, both buttons grey out together.
@@ -698,6 +706,14 @@ export class DashboardPanel {
                 // down a running lab. Neither has work to do otherwise.
                 setDisabled('action-save', !hasWorkspace || !hasDeployedLab);
                 setDisabled('action-stop', !hasWorkspace || !hasDeployedLab);
+
+                // Topology View: needs a deployed lab. Same enablement
+                // condition as Stop/Save because "look at the running
+                // lab" only makes sense when there IS a running lab.
+                // The action is a thin shim that dispatches to
+                // srl-labs' TopoViewer; button is live the moment a
+                // lab is deployed, dims the moment it's destroyed.
+                setDisabled('action-topology-view', !hasWorkspace || !hasDeployedLab);
             }
 
             function setDisabled(id, disabled) {

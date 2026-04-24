@@ -5,7 +5,71 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.1] - 2026-04-24
+## [0.4.2] - 2026-04-24
+
+Second patch of the v0.4.x user-feedback cycle. Two small but
+high-value adds from the v0.4.1 smoke test.
+
+### Added
+- **Start fallback file picker for non-standard topology names.**
+  Start now has a three-step topology resolver:
+  1. Session memory — if the user picked a manual topology earlier
+     this session, reuse it silently (unless the file has since been
+     deleted, in which case clear the memory and fall through).
+  2. Glob discovery — look for `*.clab.yml` / `*.clab.yaml`, same as
+     v0.4.1 (zero → step 3, one → use silently, multiple → QuickPick).
+  3. Fallback file picker — `showOpenDialog` filtered to `.yml` /
+     `.yaml` as an escape hatch for repos that don't follow the
+     `.clab.yml` naming convention. User cancel = quiet exit.
+
+  Picked topology is remembered in a module-level `Map<workspace,
+  path>` for the extension's lifetime (= lab session). Survives
+  dashboard close+reopen; resets on lab restart (no persistence
+  layer, matching the sandbox container's ephemeral contract).
+  If the remembered file vanishes from disk, we detect+recover
+  silently on the next Start.
+
+- **Topology View button.** Sixth button in the actions row, placed
+  between Start and Stop in reading order (Import → Start → *view
+  what you started* → Stop → Save → Export). Dispatches to srl-labs'
+  TopoViewer via a dynamic command lookup: enumerate
+  `vscode.commands.getCommands()`, find the first `containerlab.*`
+  command whose ID contains "topoviewer" (case-insensitive). This
+  buys resilience against future srl-labs renames — the button
+  keeps working even if the exact command ID changes, as long as
+  the general pattern holds. Clear error toast if no match is
+  found (srl-labs extension missing).
+
+  Enablement: same condition as Stop/Save (needs a deployed lab).
+  The moment the last lab is destroyed, Topology View dims
+  alongside them.
+
+- **`sandboxDashboard.topologyView`** command in the palette.
+
+### Changed
+- **Start button enablement loosened.** Previously disabled when
+  `state.topologies.length === 0`. Now enabled whenever a workspace
+  is open — Start can handle the zero-topology case itself via the
+  fallback picker. The `hasTopology` signal is still computed in
+  `updateButtonEnablement()` as documentation (and for any future
+  button that genuinely needs it), but no button currently uses it.
+
+### Notes
+- Dynamic command lookup for Topology View is a small but deliberate
+  architectural choice: the dashboard is increasingly a *launcher*
+  for capabilities that live in other extensions (srl-labs'
+  TopoViewer today; potentially Edgeshark / lab inspection / etc.
+  tomorrow). Resilient dispatch patterns — discover-at-runtime
+  rather than hardcode — make that integration style sustainable
+  as the surrounding ecosystem evolves.
+- Fallback picker accepts any `.yml` / `.yaml`; no shape validation.
+  If the user picks a non-topology file, `containerlab deploy` will
+  reject it with a clear error that surfaces through runDeploy's
+  existing failure toast. Trusting the user's pick beats
+  half-hearted YAML inspection for a patch release.
+- Pairs with `lab-base-sandbox` rev1.0.7 (extension bump only).
+
+
 
 Patch release driven by user feedback from the v0.4.0 smoke test:
 after cloning a repo via Import, users hit the `git config user.name`

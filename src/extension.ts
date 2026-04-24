@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { runExport, runImport, runSave, runSetupGit, runStart, runStop } from './actions';
+import { runExport, runImport, runSave, runSetupGit, runStart, runStop, runTopologyView } from './actions';
 import { getGitIdentity, hasGitInWorkspace } from './git';
 import { StateRefresher } from './refresher';
 import { showDashboard } from './webview';
@@ -55,7 +55,7 @@ const AUTO_OPEN_SHOWN_KEY = 'sandboxDashboard.autoOpenShown';
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.4.1 — M4.2: set-up-git)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.2 — Start fallback picker + Topology View)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,
@@ -102,6 +102,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('sandboxDashboard.stop',   () => runStop(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.export', () => runExport(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.topologyView', () => runTopologyView(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.setupGit', () => runSetupGit(context, output)),
     );
 

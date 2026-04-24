@@ -34,3 +34,4 @@ export { runSetupGit } from './setup-git';
 export { runStart } from './start';
 export { runStop } from './stop';
 export { runSave } from './save';
+export { runTopologyView } from './topology-view';
