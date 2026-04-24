@@ -5,7 +5,106 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-04-23
+## [0.4.0] - 2026-04-24
+
+Milestone 4 — **Stop and GitHub clone**. Driven by user feedback
+from the v0.3.0 smoke test: a clean way to tear down a lab
+without leaving the dashboard, and a "drop my repo here" import
+path that matches how lab content actually lives in real
+workflows.
+
+### Added
+- **Stop button.** Fifth button in the actions row (🛑). Tears
+  down a deployed lab via `containerlab destroy --cleanup`. UI
+  vocabulary deliberately avoids "destroy" because the topology
+  file, `clab-*` config directories, and git-tracked content
+  all survive — only the running containers and network state
+  go away. A subsequent Start re-deploys from the same topology
+  and picks up any saved configs automatically.
+- **Three-button confirmation modal on Stop.** Cancel / Save and
+  Stop / Stop without Saving. "Save and Stop" runs `containerlab
+  save` first to capture running configs into `clab-<labname>/`,
+  then destroys. If save fails, the lab is NOT torn down — the
+  user wanted their configs preserved, so we don't proceed
+  without them. Partial-success path (save succeeded, destroy
+  failed) is surfaced honestly: "Configs were saved successfully,
+  but stop failed: <err>. The lab is still running."
+- **GitHub clone for Import.** Import now opens with a QuickPick:
+  📁 Upload File (.tar.gz) or 🐙 Clone from GitHub. The tarball
+  path is unchanged from M3.3. The GitHub path:
+  - `showInputBox` for the repository URL with loose validation
+  - Reads workspace contents — fast-path for empty workspaces
+    (no confirmation), destructive-confirmation modal for
+    non-empty (lists first 8 entries verbatim, "… (+N more)"
+    overflow)
+  - Wipe via `fs.readdir` + `fs.rm({recursive, force})` per
+    entry — safer than shell wildcards
+  - `git clone --progress <url> .` from workspace root with
+    line-streamed progress (handles git's CR-based in-line
+    progress updates by normalizing CR to LF before splitting)
+  - 30s "still working" status hint in the progress toast
+  - 5min hard timeout (SIGTERM, then SIGKILL after 3s grace)
+  - Trusts code-server's auth flow — git credential prompts
+    are intercepted and surfaced through the browser
+  - On success: refreshes the dashboard, info toast
+  - On failure: error toast acknowledges the workspace state
+    honestly ("workspace was already cleared, you'll need to
+    import again or restore from backup")
+- **`Sandbox Dashboard: Stop Lab`** command in the palette.
+
+### Changed
+- **Stop and Save now share a fresh-inspect helper.** Both
+  actions need to "ask containerlab what's currently running"
+  before operating. New internal module `src/actions/_helpers.ts`
+  houses `inspectDeployedLabs()`, `extractLabs()`, and the
+  `RunningLab` type (renamed from `SavableLab` since it's now
+  used by more than just save). Save's M3.5 inline copies were
+  deleted in favor of importing from `_helpers`. Behavior
+  unchanged.
+- **Stop's button enablement matches Save's exactly.** Both
+  disabled when no workspace open OR no labs deployed. Comment
+  in `updateButtonEnablement` notes the parallel so future
+  drift is visible.
+- **Action button row now contains 5 buttons.** `flex-wrap` on
+  the row already handled this — no CSS changes needed. The
+  buttons read left-to-right as the natural lifecycle: Import
+  (get content) → Start (run) → Stop (tear down) → Save
+  (snapshot) → Export (bundle).
+
+### Internal
+- **`spawnAndStream` consolidation.** Stop has two containerlab
+  invocations (save + destroy) that need the same line-
+  streaming-to-progress-and-output pattern Start.runDeploy and
+  Save.runContainerlabSave already implement. Stop's local
+  `spawnAndStream` helper takes a `[bin, args]` tuple and the
+  cwd/output/progress trio. Will be lifted to `_helpers` if
+  Start or Save grow a second spawn each — premature
+  extraction now would force the helper to handle every shape
+  any caller might want.
+- **JSDoc terminator gotcha caught and fixed.** Stop's draft
+  contained `clab-*/` in a comment, which TypeScript correctly
+  read as the JSDoc closing token (`*/`). Cascaded into 100+
+  parse errors. Same family as M3.5's stray-backtick bug —
+  comment contents accidentally matching the enclosing block's
+  terminator. `tsc --noEmit` caught it immediately; fix was
+  rephrasing the comment. Layered defenses (tsc + node --check
+  on emitted webview) keep covering this class.
+
+### Notes
+- Pairs with `lab-base-sandbox` 1.0.5.
+- "Stop" is intentionally NOT the same as a containerlab "pause"
+  feature (which doesn't exist anyway). It's a clean teardown
+  with optional save. Resumability comes from the topology +
+  saved configs surviving in the workspace, not from any
+  containerlab-level pause/resume mechanism.
+- GitHub clone has no branch/tag selection. Falls back to
+  whatever the repo's default branch is. Branch picker is a
+  candidate for M5+ if users ask for it.
+- No mid-clone cancellation. Killing a clone partway leaves
+  the workspace in an indeterminate state; the 5-min timeout
+  handles the pathological hang case.
+
+
 
 Milestone 3 — **the four buttons**. The dashboard is no longer
 just an observer; it's a fully functional control plane for the

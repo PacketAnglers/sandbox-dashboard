@@ -52,7 +52,7 @@ const AUTO_OPEN_SHOWN_KEY = 'sandboxDashboard.autoOpenShown';
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.3.0 — M3: the four buttons)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.0 — M4: Stop + GitHub clone)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,

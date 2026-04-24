@@ -6,27 +6,23 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.3.0 — the four buttons.** The dashboard is now a full lifecycle control plane for UCN Sandbox labs. Observe the workspace, deploy topologies, capture running configs, export tarballs, import lab bundles — all without leaving the IDE.
+**v0.4.0 — Stop and GitHub clone.** The dashboard now covers the full sandbox lab lifecycle, including a clean teardown path and a "drop my repo here" import flow. User-validated against real workflows.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
 | **M1** | ✅ Shipped | Marketplace identity, command routing, status bar button, container image pairing, publish pipeline |
 | **M2** | ✅ Shipped | Auto-open on first activation, workspace status, topology detection, containerlab inspection, live reactivity, display polish |
 | **M3** | ✅ Shipped | The four buttons: Import / Start / Save / Export; preconditional enablement; build-time webview syntax guardrail |
-| M4 | Planned | Destroy action, confirmation flows, richer error handling |
+| **M4** | ✅ Shipped | Stop button (with optional save-first); Import gains a GitHub clone path alongside tarball upload |
+| M5 | Planned | Webview-hosted upload/download (so Import/Export interact with the user's local machine, not the container's filesystem) |
+| M6 | Planned | Per-lab readiness signal (container-state-based) |
 
-### M3 recap
+### M4 recap
 
-1. **M3.0** — build-time syntax check on the emitted webview script. `scripts/check-webview-script.js` runs after every bundle, loads the bundled extension with a mock `vscode`, captures the HTML emitted by `DashboardPanel.buildHtml()`, extracts the inline `<script>` body, and runs `node --check` on it. Catches runtime-visible JS syntax errors at build time. Combined with `tsc --noEmit`, both TypeScript-level and emitted-JS-level syntax issues are caught before shipping.
-2. **M3.1** — action message plumbing. Webview buttons send `{type:'action', payload:{kind}}` messages; the extension dispatcher translates to `sandboxDashboard.<kind>` VS Code commands. Same dispatch path used by command palette entries, so actions are reachable from buttons, keybindings, and the palette uniformly.
-3. **M3.2** — Export. `tar -czf` with opinionated exclusions (`.git`, `node_modules`, `clab-*`). Default filename `<workspace-name>-YYYY-MM-DD-HHMM.tar.gz` in `$HOME`.
-4. **M3.3** — Import. `tar -tzf` for collision detection; modal confirmation listing conflicts (first 5 verbatim, overflow summarized); `tar -xzf -C <workspaceRoot>` to extract. File watchers pick up new topologies automatically.
-5. **M3.4** — Start. `sudo -n containerlab deploy -t <topology>` with line-streamed progress notification ("Creating container clab-foo-bar", etc.). Topology QuickPick when multiple `*.clab.yml` files exist. Triggers `sandboxDashboard.refresh` on success so the new lab surfaces within ~1 second instead of waiting up to 30s for the poll tick.
-6. **M3.5** — Save. Two-phase: `sudo -n containerlab save` first (writes configs into `clab-*/<nodename>/`), then bundles with a shorter exclude list that keeps those directories. Partial-success path: if configs capture cleanly but the user cancels the save dialog, we toast "Configs captured; tarball skipped — you can Export anytime" instead of treating it as a failure.
+1. **M4.0 — Stop action.** Fifth button (🛑) with three-option modal (Cancel / Save and Stop / Stop without Saving). Under the hood: `sudo -n containerlab destroy --cleanup -t <topology>`. UI vocabulary is "Stop" not "Destroy" — topology and saved configs survive, so a subsequent Start is fully resumable. Refactored Save to share lab-inspection logic via new `src/actions/_helpers.ts`.
+2. **M4.1 — GitHub clone for Import.** Import opens with a QuickPick: 📁 Upload File or 🐙 Clone from GitHub. GitHub path includes empty-workspace fast path, destructive-confirm modal for non-empty workspaces, `git clone --progress` with line-streamed progress, 30s "still working" hint, 5-min hard timeout, and trusts code-server to handle GitHub auth.
 
-All privileged containerlab calls use `sudo -n` (non-interactive). An unconfigured NOPASSWD sudo fails fast with a clear diagnostic instead of hanging forever on a password prompt the webview can't service.
-
-## What the dashboard shows (v0.3.0)
+## What the dashboard shows (v0.4.0)
 
 Open a sandbox lab workspace and the dashboard auto-opens with three live sections:
 
@@ -57,12 +53,13 @@ For development or out-of-lab use, install from the published `.vsix` on the [Gi
 |---------|-------------|
 | `Sandbox Dashboard: Open` | Open or focus the dashboard webview. |
 | `Sandbox Dashboard: Refresh` | Force an immediate state recompute without waiting for the 30s poll tick. |
-| `Sandbox Dashboard: Import Lab from Tarball` | Pick a `.tar.gz` and extract it into the current workspace (with collision confirmation). |
+| `Sandbox Dashboard: Import Lab from Tarball` | Pick how to import — upload a `.tar.gz` or clone from GitHub. The "Import" name is preserved even though M4.1 added a clone path. |
 | `Sandbox Dashboard: Start Lab` | Deploy a `*.clab.yml` via `containerlab deploy`. Picker appears if multiple topologies exist. |
+| `Sandbox Dashboard: Stop Lab` | Tear down a deployed lab via `containerlab destroy --cleanup`. Three-option modal: Cancel / Save and Stop / Stop without Saving. |
 | `Sandbox Dashboard: Save Lab (Capture Configs + Export)` | Run `containerlab save` on a deployed lab, then bundle the workspace as a tarball. |
 | `Sandbox Dashboard: Export Workspace as Tarball` | Bundle the workspace as a `.tar.gz` without touching running state. |
 
-All actions are also reachable via the four buttons at the top of the dashboard; the command palette entries exist so keyboard-driven workflows work too.
+All actions are also reachable via the five buttons at the top of the dashboard; the command palette entries exist so keyboard-driven workflows work too.
 
 ## Architecture
 
@@ -75,16 +72,18 @@ src/
   containerlab.ts     CLI wrapper (defensive JSON parsing)
   types.ts            shared types (state + messages + ActionKind)
   actions/
-    index.ts          barrel re-exporting the four action runners
+    index.ts          barrel re-exporting the action runners
+    _helpers.ts       shared inspectDeployedLabs + RunningLab (used by Save, Stop)
     export.ts         Export + shared tar helper (runTar, timestamp, excludes)
-    import.ts         Import with collision detection
+    import.ts         Import router (tarball method + GitHub clone method)
     start.ts          Start with topology picker + progress streaming
+    stop.ts           Stop with three-option modal + optional save-first
     save.ts           Save (containerlab save + tarball, reuses runTar)
 scripts/
   check-webview-script.js   build-time JS-syntax guardrail on emitted webview script
 ```
 
-The webview is a pure renderer. The extension host computes authoritative state and pushes it as `{ type: 'state', payload }` messages; the webview reflects what it was told. Button clicks flow the reverse direction as `{ type: 'action', payload: { kind } }` messages, which the extension dispatcher translates to `sandboxDashboard.<kind>` VS Code commands. State channel and action channel are independent — actions run while M2's observer keeps the display honest.
+The webview is a pure renderer. The extension host computes authoritative state and pushes it as `{ type: 'state', payload }` messages; the webview reflects what it was told. Button clicks flow the reverse direction as `{ type: 'action', payload: { kind } }` messages, which the extension dispatcher translates to `sandboxDashboard.<kind>` VS Code commands. State channel and action channel are independent — actions run while the observer keeps the display honest.
 
 ## Building from source
 
