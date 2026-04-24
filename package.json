@@ -2,7 +2,7 @@
   "name": "sandbox-dashboard",
   "displayName": "Sandbox Dashboard",
   "description": "Dashboard for UCN Sandbox labs — import, start, save, export. Built for aclabs / Arista Containerized Labs.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "packetanglers",
   "license": "MIT",
   "repository": {
@@ -54,6 +54,10 @@
       {
         "command": "sandboxDashboard.export",
         "title": "Sandbox Dashboard: Export Workspace as Tarball"
+      },
+      {
+        "command": "sandboxDashboard.setupGit",
+        "title": "Sandbox Dashboard: Set Up Git for Committing"
       }
     ]
   },

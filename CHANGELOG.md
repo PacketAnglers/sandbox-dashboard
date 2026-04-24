@@ -5,7 +5,58 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-04-24
+## [0.4.1] - 2026-04-24
+
+Patch release driven by user feedback from the v0.4.0 smoke test:
+after cloning a repo via Import, users hit the `git config user.name`
+/ `user.email` wall the moment they tried to commit. They had to drop
+to a terminal to set those, which broke the "low-friction lab
+lifecycle" promise.
+
+### Added
+- **Set up Git for committing.** New action that prompts for `user.name`
+  and `user.email` and runs `git config --global` for both. Reachable
+  three ways:
+  1. **Clone-from-GitHub gate.** Before any destructive workspace
+     change, `runImportFromGitHub` calls a new `ensureGitIdentity()`
+     helper. If config is missing, the prompt appears; the clone
+     proceeds only if the user completes it. Cancel = clone aborted
+     with no workspace mutation, plus a hint pointing at the
+     `Set Up Git for Committing` palette command for later.
+  2. **Activation-time hook.** On extension activation, after the
+     dashboard auto-opens, a 2-second-deferred check runs: if the
+     workspace contains a `.git` directory (root or one level deep)
+     AND `git config --global` is missing identity fields, a non-modal
+     info notification appears: *"Set up Git for committing? Sandbox
+     labs start fresh each session..."* with **Set Up Now** and
+     **Maybe Later** actions. Pure non-git workflows see nothing.
+  3. **Command palette.** `Sandbox Dashboard: Set Up Git for
+     Committing` is always available. Idempotent — if identity is
+     already set, surfaces a confirmation toast and exits without
+     re-prompting.
+- **`src/git.ts` utility module** with `getGitIdentity()`,
+  `setGitIdentity()`, `hasGitInWorkspace()`. Spawn-based, no shell,
+  same safety pattern as the rest of the codebase.
+
+### Notes
+- **Sandbox containers are intentionally ephemeral** — 8-hour
+  lifetime, blank canvas every launch, no persistent volumes for
+  user state. We deliberately do NOT try to persist git identity
+  across launches: that would be out of character with how labs
+  work, and not actually possible without coordinated infrastructure
+  changes outside this extension. Users see the prompt once per lab
+  launch (in workspaces where git matters); that's the contract.
+- The clone-time gate runs BEFORE the destructive workspace wipe.
+  Cancelling at git-identity setup leaves the workspace untouched.
+- Validation is loose: name must be non-empty, email must contain
+  `@`. People legitimately use addresses like
+  `12345+username@users.noreply.github.com` that strict RFC-822
+  validators reject.
+
+### Pairs with
+- `lab-base-sandbox` rev1.0.6 (extension bump only).
+
+
 
 Milestone 4 — **Stop and GitHub clone**. Driven by user feedback
 from the v0.3.0 smoke test: a clean way to tear down a lab

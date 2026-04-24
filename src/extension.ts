@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { runExport, runImport, runSave, runStart, runStop } from './actions';
+import { runExport, runImport, runSave, runSetupGit, runStart, runStop } from './actions';
+import { getGitIdentity, hasGitInWorkspace } from './git';
 import { StateRefresher } from './refresher';
 import { showDashboard } from './webview';
 
@@ -39,8 +40,10 @@ import { showDashboard } from './webview';
  *   M2.2 ✓ workspace state model + initial snapshot
  *   M2.3 ✓ file watcher + containerlab polling (reactivity) (THIS)
  *   M2.4 state display polish
- *   M3  the four buttons (Import / Start / Save / Export)
- *   M4  polish, confirmations, error handling
+ *   M3  ✓ the four buttons (Import / Start / Save / Export)
+ *   M4.0 ✓ Stop button with optional save-first
+ *   M4.1 ✓ GitHub clone for Import (router pattern)
+ *   M4.2 ✓ Set-up-Git for committing (this release: v0.4.1)
  */
 
 // Workspace-scoped memory key for the "have we auto-opened for this
@@ -52,7 +55,7 @@ const AUTO_OPEN_SHOWN_KEY = 'sandboxDashboard.autoOpenShown';
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.4.0 — M4: Stop + GitHub clone)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.1 — M4.2: set-up-git)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,
@@ -99,6 +102,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('sandboxDashboard.stop',   () => runStop(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),
         vscode.commands.registerCommand('sandboxDashboard.export', () => runExport(context, output)),
+        vscode.commands.registerCommand('sandboxDashboard.setupGit', () => runSetupGit(context, output)),
     );
 
     // ── Auto-open policy ───────────────────────────────────────────────────
@@ -118,6 +122,26 @@ export function activate(context: vscode.ExtensionContext) {
     // VS Code restart would be annoying after a few days. "Once per workspace"
     // threads the needle between discovery and respect.
     maybeAutoOpen(context, output, refresher);
+
+    // ── Git-identity activation hook ───────────────────────────────────────
+    //
+    // Trigger D (hybrid): only prompt the user about git identity if there's
+    // evidence git matters in this workspace — specifically, a .git directory
+    // exists at workspace root or one level deep. Users who never use git in
+    // the lab see nothing.
+    //
+    // Fires after a 2-second delay so the auto-opened dashboard has time to
+    // surface first and the user isn't ambushed by competing UI on lab launch.
+    // The Clone-from-GitHub action has its own gate via ensureGitIdentity()
+    // so users who arrive at git-needs without an existing .git directory
+    // (the clone-from-scratch path) get prompted at the right moment too.
+    //
+    // Sandbox containers are intentionally ephemeral; we don't try to persist
+    // identity across launches. This prompt fires once per session per
+    // workspace where it's relevant, and that's the contract.
+    setTimeout(() => {
+        void maybePromptForGitIdentity(output);
+    }, 2000);
 }
 
 export function deactivate() {
@@ -157,6 +181,64 @@ function maybeAutoOpen(
     // flag we don't need to await — VS Code persists asynchronously and
     // the ordering doesn't affect correctness.
     void context.workspaceState.update(AUTO_OPEN_SHOWN_KEY, true);
+}
+
+/**
+ * Activation-time git-identity check (Trigger D path).
+ *
+ * Only prompts if BOTH conditions are true:
+ *   1. The workspace contains a .git directory (or one in an immediate
+ *      subdirectory) — i.e., there's evidence git matters here.
+ *   2. The user's global git config is missing user.name and/or
+ *      user.email — i.e., they'd hit a wall the moment they try
+ *      to commit.
+ *
+ * If both are true, shows a non-modal info notification with
+ * "Set Up Now" / "Maybe Later" actions. User can dismiss; we
+ * don't nag again this session (in-memory flag would be ideal,
+ * but for a once-per-activation check this is already low-noise).
+ *
+ * Why non-modal: this is a friendly nudge, not a forced workflow.
+ * The user might be just looking around and not planning to commit.
+ * A modal would feel rude.
+ */
+async function maybePromptForGitIdentity(
+    output: vscode.OutputChannel,
+): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+    const workspaceRoot = folders[0].uri.fsPath;
+
+    // Cheap check first: do we have a .git anywhere worth caring about?
+    // If not, silent skip — pure non-git workflows shouldn't see this.
+    const hasGit = await hasGitInWorkspace(workspaceRoot);
+    if (!hasGit) {
+        output.appendLine('[sandboxDashboard] no .git in workspace; skipping git-identity prompt');
+        return;
+    }
+
+    // Has git. Now check identity. If both fields are set, no prompt needed.
+    const identity = await getGitIdentity();
+    if (identity.name && identity.email) {
+        output.appendLine(
+            `[sandboxDashboard] git identity already configured: ${identity.name} <${identity.email}>`,
+        );
+        return;
+    }
+
+    output.appendLine(
+        '[sandboxDashboard] git workspace detected with missing identity; prompting',
+    );
+    const choice = await vscode.window.showInformationMessage(
+        'Set up Git for committing? Sandbox labs start fresh each session, ' +
+            'so your name and email need to be configured before you can commit and push.',
+        'Set Up Now',
+        'Maybe Later',
+    );
+    if (choice === 'Set Up Now') {
+        await vscode.commands.executeCommand('sandboxDashboard.setupGit');
+    }
+    // 'Maybe Later' or dismiss → silent.
 }
 
 /**

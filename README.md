@@ -6,7 +6,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.4.0 — Stop and GitHub clone.** The dashboard now covers the full sandbox lab lifecycle, including a clean teardown path and a "drop my repo here" import flow. User-validated against real workflows.
+**v0.4.1 — Stop, GitHub clone, and Set up Git.** The dashboard now covers the full sandbox lab lifecycle, including a clean teardown path, a "drop my repo here" import flow, and a smart prompt that gets git ready for committing without dropping to the terminal. User-validated against real workflows.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
@@ -22,7 +22,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 1. **M4.0 — Stop action.** Fifth button (🛑) with three-option modal (Cancel / Save and Stop / Stop without Saving). Under the hood: `sudo -n containerlab destroy --cleanup -t <topology>`. UI vocabulary is "Stop" not "Destroy" — topology and saved configs survive, so a subsequent Start is fully resumable. Refactored Save to share lab-inspection logic via new `src/actions/_helpers.ts`.
 2. **M4.1 — GitHub clone for Import.** Import opens with a QuickPick: 📁 Upload File or 🐙 Clone from GitHub. GitHub path includes empty-workspace fast path, destructive-confirm modal for non-empty workspaces, `git clone --progress` with line-streamed progress, 30s "still working" hint, 5-min hard timeout, and trusts code-server to handle GitHub auth.
 
-## What the dashboard shows (v0.4.0)
+## What the dashboard shows (v0.4.1)
 
 Open a sandbox lab workspace and the dashboard auto-opens with three live sections:
 
@@ -58,6 +58,7 @@ For development or out-of-lab use, install from the published `.vsix` on the [Gi
 | `Sandbox Dashboard: Stop Lab` | Tear down a deployed lab via `containerlab destroy --cleanup`. Three-option modal: Cancel / Save and Stop / Stop without Saving. |
 | `Sandbox Dashboard: Save Lab (Capture Configs + Export)` | Run `containerlab save` on a deployed lab, then bundle the workspace as a tarball. |
 | `Sandbox Dashboard: Export Workspace as Tarball` | Bundle the workspace as a `.tar.gz` without touching running state. |
+| `Sandbox Dashboard: Set Up Git for Committing` | Prompt for `user.name` and `user.email`, then run `git config --global` for both. Idempotent — confirms and exits if already set. Auto-triggers from Clone-from-GitHub and from extension activation when a `.git` directory is detected without identity configured. |
 
 All actions are also reachable via the five buttons at the top of the dashboard; the command palette entries exist so keyboard-driven workflows work too.
 

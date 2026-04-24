@@ -61,6 +61,8 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { spawn } from 'child_process';
 
+import { ensureGitIdentity } from './setup-git';
+
 const STILL_WORKING_MS = 30_000;     // 30s: surface "still working" hint
 const CLONE_HARD_TIMEOUT_MS = 300_000; // 5min: kill the process
 
@@ -241,6 +243,27 @@ async function runImportFromGitHub(
     }
     const trimmedUrl = url.trim();
     output.appendLine(`[sandboxDashboard] github clone source: ${trimmedUrl}`);
+
+    // ── Step 1.5: ensure git identity is set ───────────────────────────────
+    //
+    // Before we touch the workspace, make sure the user can actually commit
+    // and push to whatever they're cloning. ensureGitIdentity() returns true
+    // if identity is already set OR the user successfully completes the
+    // prompt. Returns false if the user cancels — in which case we abort
+    // the whole clone, since landing them in a "you can't commit" wall
+    // immediately after a successful clone is the exact friction we're
+    // trying to remove.
+    //
+    // Critically, this gate runs BEFORE the destructive workspace wipe
+    // below. Cancel here = nothing changes on disk.
+    const identityOk = await ensureGitIdentity(output);
+    if (!identityOk) {
+        output.appendLine('[sandboxDashboard] clone aborted: user declined git identity setup');
+        vscode.window.showInformationMessage(
+            'Clone cancelled. Run "Sandbox Dashboard: Set Up Git for Committing" from the command palette anytime, then try again.',
+        );
+        return;
+    }
 
     // ── Step 2: check workspace contents ───────────────────────────────────
     const entries = await fsp.readdir(workspaceRoot);
