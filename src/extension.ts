@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { runExport, runImport, runSave, runSetupGit, runStart, runStop, runTopologyView } from './actions';
+import { runExport, runImport, runOpenTopologyFile, runSave, runSetupGit, runStart, runStop, runTopologyView } from './actions';
 import { getGitIdentity, hasGitInWorkspace } from './git';
 import { isInFlight, markInFlight, unmarkInFlight } from './in-flight';
 import { StateRefresher } from './refresher';
@@ -108,7 +108,7 @@ function trackedCommand(
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.4.4 — ecosystem-rename gate)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.5 — Open Topology File + Topology View smart-close)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,
@@ -173,6 +173,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(
             'sandboxDashboard.topologyView',
             trackedCommand('topologyView', () => runTopologyView(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.openTopologyFile',
+            trackedCommand('openTopologyFile', () => runOpenTopologyFile(context, output), refresher, output),
         ),
         vscode.commands.registerCommand('sandboxDashboard.setupGit', () => runSetupGit(context, output)),
     );

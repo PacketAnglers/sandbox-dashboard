@@ -437,6 +437,9 @@ export class DashboardPanel {
             <button type="button" class="action-btn" data-action="topologyView" id="action-topology-view">
                 <span class="icon">🗺️</span>Topology View
             </button>
+            <button type="button" class="action-btn" data-action="openTopologyFile" id="action-open-topology-file">
+                <span class="icon">📝</span>Open File
+            </button>
             <button type="button" class="action-btn" data-action="stop" id="action-stop">
                 <span class="icon">🛑</span>Stop
             </button>
@@ -798,6 +801,14 @@ export class DashboardPanel {
                     hasWorkspace && hasDeployedLab && hasConformingLab,
                     topoViewTooltip,
                 );
+
+                // Open Topology File: needs only a workspace. The action's
+                // shared three-step resolver (session memory → glob discovery
+                // → fallback file picker) handles the no-topology-found case
+                // by prompting the user with an open dialog. Disabling on
+                // !hasTopology would be wrong for the same reason it'd be
+                // wrong for Start.
+                set('action-open-topology-file', 'openTopologyFile', hasWorkspace);
             }
 
             // Every 5 seconds, refresh any [data-timestamp] element on the page.

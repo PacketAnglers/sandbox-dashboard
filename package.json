@@ -2,7 +2,7 @@
   "name": "sandbox-dashboard",
   "displayName": "Sandbox Dashboard",
   "description": "Dashboard for UCN Sandbox labs — import, start, save, export. Built for aclabs / Arista Containerized Labs.",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "publisher": "packetanglers",
   "license": "MIT",
   "repository": {
@@ -58,6 +58,10 @@
       {
         "command": "sandboxDashboard.topologyView",
         "title": "Sandbox Dashboard: Open Topology View"
+      },
+      {
+        "command": "sandboxDashboard.openTopologyFile",
+        "title": "Sandbox Dashboard: Open Topology File"
       },
       {
         "command": "sandboxDashboard.setupGit",

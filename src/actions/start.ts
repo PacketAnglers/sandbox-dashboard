@@ -43,27 +43,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { spawn } from 'child_process';
 
-const CLAB_GLOBS = ['**/*.clab.yml', '**/*.clab.yaml'];
-
-/**
- * Session-scoped memory of the user's manually-picked topology file.
- *
- * This is a module-level variable, not VS Code state, deliberately:
- *   - It persists for the extension's lifetime, which matches the lab's
- *     lifetime (extension reactivates on lab restart → fresh variable).
- *   - It survives dashboard close+reopen within the same session, because
- *     the extension host keeps running.
- *   - It does NOT persist across lab restarts, matching the rest of the
- *     dashboard's "honest ephemerality" posture.
- *
- * The memory is cleared if the file stops existing on disk (detected at
- * Start time) — handles the case where the user deletes or renames their
- * topology file mid-session.
- *
- * Keyed by workspace root path so switching between workspaces in a
- * multi-root setup picks the right remembered file.
- */
-const rememberedTopology = new Map<string, string>();
+import { rememberedTopology, resolveTopology } from './_topology-resolver';
 
 export async function runStart(
     _context: vscode.ExtensionContext,
@@ -82,118 +62,15 @@ export async function runStart(
     const workspaceRoot = folders[0].uri.fsPath;
     const wsFolder = folders[0];
 
-    // ── Resolve topology (three steps, short-circuit at the first match) ──
-    //
-    // Step 1: Session memory. If the user picked a non-standard topology
-    //         earlier this session, use it — unless the file has since been
-    //         deleted, in which case silently clear the memory and fall
-    //         through to normal discovery.
-    //
-    // Step 2: Glob discovery. Look for *.clab.yml / *.clab.yaml files in the
-    //         workspace. This is the "convention over configuration" path
-    //         that covers 90%+ of real labs. Zero files → step 3. One file
-    //         → use silently. Multiple → QuickPick.
-    //
-    // Step 3: Fallback file picker. No files match the convention — offer
-    //         the user a dialog to pick any .yml/.yaml file as their
-    //         topology. Remember the pick for subsequent Start clicks in
-    //         this session.
-    //
-    // Once a topologyPath is resolved, rememberedTopology[workspaceRoot] is
-    // updated so subsequent Start clicks reuse it without re-prompting.
-    let topologyPath: string | undefined;
-
-    // ── Step 1: check session memory ───────────────────────────────────────
-    const remembered = rememberedTopology.get(workspaceRoot);
-    if (remembered) {
-        if (fs.existsSync(remembered)) {
-            output.appendLine(`[sandboxDashboard] start: using remembered topology ${remembered}`);
-            topologyPath = remembered;
-        } else {
-            output.appendLine(
-                `[sandboxDashboard] remembered topology ${remembered} no longer exists; clearing`,
-            );
-            rememberedTopology.delete(workspaceRoot);
-            // Fall through to discovery.
-        }
-    }
-
-    // ── Step 2: glob discovery ─────────────────────────────────────────────
+    // ── Resolve topology ───────────────────────────────────────────────────
+    // Three-step resolution (session memory → glob discovery → fallback file
+    // picker) lives in _topology-resolver.ts so Open Topology File can share
+    // it. The resolver also handles all session-memory bookkeeping.
+    let topologyPath = await resolveTopology(workspaceRoot, wsFolder, output, 'deploy');
     if (!topologyPath) {
-        const topologyUris: vscode.Uri[] = [];
-        const seen = new Set<string>();
-        for (const glob of CLAB_GLOBS) {
-            const found = await vscode.workspace.findFiles(
-                new vscode.RelativePattern(wsFolder, glob),
-                null,
-            );
-            for (const uri of found) {
-                if (!seen.has(uri.fsPath)) {
-                    seen.add(uri.fsPath);
-                    topologyUris.push(uri);
-                }
-            }
-        }
-
-        if (topologyUris.length === 1) {
-            topologyPath = topologyUris[0].fsPath;
-        } else if (topologyUris.length > 1) {
-            const items = topologyUris.map((uri) => ({
-                label: path.basename(uri.fsPath),
-                description: path.relative(workspaceRoot, uri.fsPath),
-                uri,
-            }));
-            const picked = await vscode.window.showQuickPick(items, {
-                title: 'Pick a topology to deploy',
-                placeHolder: 'Which .clab.yml do you want to start?',
-                matchOnDescription: true,
-            });
-            if (!picked) {
-                output.appendLine('[sandboxDashboard] start cancelled by user (no topology picked)');
-                return;
-            }
-            topologyPath = picked.uri.fsPath;
-        }
-        // topologyUris.length === 0 → fall through to step 3.
+        output.appendLine('[sandboxDashboard] start cancelled at topology resolution');
+        return;
     }
-
-    // ── Step 3: fallback file picker ───────────────────────────────────────
-    //
-    // No *.clab.yml / *.clab.yaml files matched. Offer the user a picker
-    // for any .yml / .yaml file as an escape hatch. We don't try to
-    // validate that the picked file is actually a containerlab topology
-    // here — if it isn't, `containerlab deploy` will reject it with a
-    // clear error message, which is already surfaced by runDeploy's
-    // failure toast.
-    if (!topologyPath) {
-        output.appendLine(
-            '[sandboxDashboard] no *.clab.yml found; prompting for manual file pick',
-        );
-
-        const picked = await vscode.window.showOpenDialog({
-            canSelectFiles: true,
-            canSelectFolders: false,
-            canSelectMany: false,
-            defaultUri: vscode.Uri.file(workspaceRoot),
-            filters: { 'Topology file': ['yml', 'yaml'] },
-            title: 'Pick a topology file to deploy',
-            openLabel: 'Use as Topology',
-        });
-
-        if (!picked || picked.length === 0) {
-            output.appendLine('[sandboxDashboard] start cancelled by user (no file picked)');
-            return;
-        }
-        topologyPath = picked[0].fsPath;
-    }
-
-    // ── Remember for this session ──────────────────────────────────────────
-    // Whether we arrived via glob discovery (standard or multi-file picker)
-    // or the fallback dialog, record the pick so subsequent Start clicks
-    // reuse it without re-asking. Cleared on next lab restart by module
-    // re-init.
-    rememberedTopology.set(workspaceRoot, topologyPath);
-    output.appendLine(`[sandboxDashboard] start: using topology ${topologyPath}`);
 
     // ── Ecosystem-compatibility rename gate ────────────────────────────────
     //

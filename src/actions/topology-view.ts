@@ -61,9 +61,13 @@
  * ─────────────────────
  * - We don't pass a topology file as a command arg. srl-labs'
  *   command doesn't accept one (it discovers via active editor).
- * - We don't close the preview-opened editor afterward. Per Option C
- *   from the v0.4.3 design discussion, we leave it open as a
- *   transient preview tab — feels native, easy to dismiss.
+ * - We DO close the preview-opened editor afterward (v0.4.5
+ *   change). Pre-v0.4.5 we left it open per Option C from the
+ *   v0.4.3 design discussion. User feedback: a lingering YAML
+ *   tab after clicking "view the graph" is presumptuous. v0.4.5
+ *   smart-closes only if WE opened the file (vs. it was already
+ *   open before our pre-open). Users who explicitly want the
+ *   YAML in the editor can use the new Open Topology File button.
  */
 
 import * as vscode from 'vscode';
@@ -145,9 +149,15 @@ export async function runTopologyView(
     // srl-labs' TopoViewer command discovers its target via the active
     // text editor's URI. Without an anchor it bails with "No lab node or
     // topology file selected." We open the topology file as a preview
-    // tab (italic single-tab semantics, auto-replaced by next preview
-    // open) with preserveFocus:false so the editor actually becomes
+    // tab with preserveFocus:false so the editor actually becomes
     // active before we dispatch.
+    //
+    // SMART CLEANUP (added v0.4.5): we capture whether the file was
+    // already open before our pre-open. If we opened it, we close it
+    // after dispatch — the user clicked "Topology View" expressing intent
+    // to see the GRAPH, not to open the YAML in the editor pane. Leaving
+    // the YAML tab around is presumptuous. If the user already had it
+    // open, we leave it alone — they had it open for a reason.
     //
     // Resolve to absolute path: containerlab's labPath may be relative
     // to wherever containerlab was invoked. We anchor against the
@@ -156,13 +166,18 @@ export async function runTopologyView(
         ? lab.topologyPath
         : path.join(workspaceRoot, lab.topologyPath);
 
+    const wasAlreadyOpen = vscode.workspace.textDocuments.some(
+        (doc) => doc.uri.fsPath === absoluteTopologyPath,
+    );
+
     try {
         await vscode.window.showTextDocument(
             vscode.Uri.file(absoluteTopologyPath),
             { preview: true, preserveFocus: false },
         );
         output.appendLine(
-            `[sandboxDashboard] anchored editor on ${absoluteTopologyPath} for TopoViewer`,
+            `[sandboxDashboard] anchored editor on ${absoluteTopologyPath} for TopoViewer` +
+                (wasAlreadyOpen ? ' (was already open; will leave open)' : ' (will close after dispatch)'),
         );
     } catch (err) {
         // Best-effort. If the file can't be opened (deleted, permissions,
@@ -191,6 +206,39 @@ export async function runTopologyView(
             'View Log',
         );
         if (action === 'View Log') output.show();
+        return;
+    }
+
+    // ── Smart cleanup: close our pre-open if we opened it ──────────────────
+    // Find the specific tab matching our topology file URI and close
+    // just that one — NOT closeActiveEditor, which by now is probably
+    // TopoViewer itself (not what we want to close).
+    //
+    // tabGroups API is in VS Code 1.67+; sandbox containers ship code-
+    // server with a recent enough version. Best-effort: if the close
+    // fails for any reason, we log and move on — the user can dismiss
+    // the lingering tab manually.
+    if (!wasAlreadyOpen) {
+        try {
+            for (const group of vscode.window.tabGroups.all) {
+                for (const tab of group.tabs) {
+                    if (
+                        tab.input instanceof vscode.TabInputText &&
+                        tab.input.uri.fsPath === absoluteTopologyPath
+                    ) {
+                        await vscode.window.tabGroups.close(tab);
+                        output.appendLine(
+                            `[sandboxDashboard] closed transient editor tab for ${absoluteTopologyPath}`,
+                        );
+                    }
+                }
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            output.appendLine(
+                `[sandboxDashboard] could not close transient editor tab: ${msg}`,
+            );
+        }
     }
 }
 

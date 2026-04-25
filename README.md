@@ -6,7 +6,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.4.4 — Ecosystem-compatibility rename gate.** The Start action now offers to rename non-conforming topology files (anything that isn't `*.clab.yml`) before deploy, so labs become visible to the broader Containerlab ecosystem (Topology View and other srl-labs features). Three-button choice: rename, start anyway, or cancel. User-validated against real lab workflows.
+**v0.4.5 — Topology View smart-close and Open Topology File.** Topology View no longer leaves a YAML editor tab behind after dispatching to TopoViewer (the editor anchor is opened transiently and closed after, *only if we opened it*). New Open Topology File button gives users an explicit way to open the YAML when they actually want to read or edit it. User-validated against real lab workflows.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
@@ -22,7 +22,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 1. **M4.0 — Stop action.** Fifth button (🛑) with three-option modal (Cancel / Save and Stop / Stop without Saving). Under the hood: `sudo -n containerlab destroy --cleanup -t <topology>`. UI vocabulary is "Stop" not "Destroy" — topology and saved configs survive, so a subsequent Start is fully resumable. Refactored Save to share lab-inspection logic via new `src/actions/_helpers.ts`.
 2. **M4.1 — GitHub clone for Import.** Import opens with a QuickPick: 📁 Upload File or 🐙 Clone from GitHub. GitHub path includes empty-workspace fast path, destructive-confirm modal for non-empty workspaces, `git clone --progress` with line-streamed progress, 30s "still working" hint, 5-min hard timeout, and trusts code-server to handle GitHub auth.
 
-## What the dashboard shows (v0.4.4)
+## What the dashboard shows (v0.4.5)
 
 Open a sandbox lab workspace and the dashboard auto-opens with three live sections:
 
@@ -59,6 +59,7 @@ For development or out-of-lab use, install from the published `.vsix` on the [Gi
 | `Sandbox Dashboard: Save Lab (Capture Configs + Export)` | Run `containerlab save` on a deployed lab, then bundle the workspace as a tarball. |
 | `Sandbox Dashboard: Export Workspace as Tarball` | Bundle the workspace as a `.tar.gz` without touching running state. |
 | `Sandbox Dashboard: Open Topology View` | Dispatches to `srl-labs.vscode-containerlab`'s TopoViewer for a graphical view of the running lab. Uses dynamic command lookup — resilient to future command-ID renames. |
+| `Sandbox Dashboard: Open Topology File` | Opens the topology YAML in the editor pane as a normal (non-preview) tab. Uses the same three-step resolver as Start (session memory → glob → fallback file picker). Sibling to Topology View, for users who want to read or edit the YAML rather than see the graph. |
 | `Sandbox Dashboard: Set Up Git for Committing` | Prompt for `user.name` and `user.email`, then run `git config --global` for both. Idempotent — confirms and exits if already set. Auto-triggers from Clone-from-GitHub and from extension activation when a `.git` directory is detected without identity configured. |
 
 All actions are also reachable via the five buttons at the top of the dashboard; the command palette entries exist so keyboard-driven workflows work too.

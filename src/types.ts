@@ -123,7 +123,7 @@ export type ExtensionMessage =
  * from the command palette and keybindings — the webview button is
  * one dispatch path, not the only one.
  */
-export type ActionKind = 'import' | 'start' | 'stop' | 'save' | 'export' | 'topologyView';
+export type ActionKind = 'import' | 'start' | 'stop' | 'save' | 'export' | 'topologyView' | 'openTopologyFile';
 
 /**
  * Messages sent FROM the webview TO the extension host.

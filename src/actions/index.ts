@@ -30,6 +30,7 @@
 
 export { runExport } from './export';
 export { runImport } from './import';
+export { runOpenTopologyFile } from './open-topology-file';
 export { runSetupGit } from './setup-git';
 export { runStart } from './start';
 export { runStop } from './stop';

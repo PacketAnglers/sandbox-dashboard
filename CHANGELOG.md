@@ -5,7 +5,77 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.4] - 2026-04-25
+## [0.4.5] - 2026-04-25
+
+Fifth patch of the v0.4.x user-feedback cycle. Topology View is finally
+working end-to-end (v0.4.4 fixed the convention issue), but smoke
+testing surfaced a UX problem: the YAML file we open behind the scenes
+to anchor srl-labs' editor-context-discovery lingers in the editor
+pane afterward. A user who clicked "Topology View" got the graph AND
+an unwanted YAML tab.
+
+### The principle
+"Don't assume what the user wants beyond what they asked for."
+Clicking Topology View expresses one intent (see the graph). Opening
+a file tab in the editor is a different intent. Conflating them =
+imposing on the user.
+
+### Changed
+- **Topology View now smart-closes its anchor file.** The
+  pre-dispatch editor-open is still required to bridge srl-labs'
+  context, but afterward we close the specific tab we opened —
+  *only if we opened it*. Detection: snapshot
+  `vscode.workspace.textDocuments` before our pre-open; if our
+  target wasn't in there, we know it's our tab to close. Close
+  is precise (`vscode.window.tabGroups.close(specificTab)`), not
+  `closeActiveEditor` (which by now is probably TopoViewer's own
+  panel). Best-effort: failures log but don't break the flow.
+  Users who already had the YAML open before clicking Topology
+  View will have it left untouched.
+
+### Added
+- **Open Topology File button.** Sibling to Topology View, placed
+  next to it in the actions row. Icon: 📝. The two now answer
+  distinct intents:
+    - **Topology View (🗺️):** "show me the graph"
+    - **Open File (📝):** "let me read or edit the YAML"
+
+  Opens the file as a normal (non-preview) editor tab —
+  `preview: false, preserveFocus: false`. Explicit user action
+  deserves a persistent tab, not a preview-replaceable one.
+
+  Uses the same three-step topology resolver as Start (session
+  memory → glob discovery → fallback file picker), so it works
+  regardless of whether the user followed the *.clab.yml
+  convention. Enablement: just needs a workspace; the resolver
+  handles the no-topology-found case via its fallback picker.
+
+- **`sandboxDashboard.openTopologyFile`** command in the palette,
+  wrapped with `trackedCommand` so it participates in the
+  in-flight registry like other button-bound actions.
+
+### Refactored
+- **Shared topology resolver in `src/actions/_topology-resolver.ts`.**
+  The three-step resolver and `rememberedTopology` Map were
+  module-level state in `start.ts`. With Open Topology File needing
+  the same logic, two callers now justify the extraction. Moved
+  to a dedicated module; both Start and Open Topology File share
+  the same session memory (so picking a file in either action
+  populates the memory the other one consults). The `purpose`
+  parameter ('deploy' | 'open') customizes prompt copy without
+  drift between callers.
+
+### Notes
+- The `tabGroups` API is in VS Code 1.67+; sandbox lab images ship
+  recent code-server, so this is safe.
+- This release exposes a recurring pattern: explicit user controls
+  reveal where you'd been making implicit assumptions. Worth keeping
+  in mind for v0.5+ — every time we add a button, look at what
+  auto-behaviors elsewhere are now obviously presumptuous and clean
+  them up.
+- Pairs with `lab-base-sandbox` rev1.0.10 (extension bump only).
+
+
 
 Fourth patch of the v0.4.x user-feedback cycle. v0.4.3's TopoViewer
 "fix" only worked for labs whose topology files matched the
