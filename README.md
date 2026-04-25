@@ -6,7 +6,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 
 ## Status
 
-**v0.4.2 — Start fallback and Topology View.** The dashboard now handles non-standard topology filenames with a file-picker fallback, and adds a one-click path to TopoViewer for exploring running labs. User-validated against real workflows.
+**v0.4.3 — Topology View fix and concurrent-click defense.** Topology View now correctly anchors srl-labs' TopoViewer on the deployed lab's topology file. Concurrent button clicks are blocked at the system level — buttons grey out and show a "…" suffix while their action runs, and the underlying `trackedCommand` wrapper catches palette/keybinding races too. User-validated against real lab workflows.
 
 | Milestone | Status | What's in it |
 |-----------|--------|--------------|
@@ -22,7 +22,7 @@ Sister extension to [`packetanglers.lab-dashboard`](https://github.com/PacketAng
 1. **M4.0 — Stop action.** Fifth button (🛑) with three-option modal (Cancel / Save and Stop / Stop without Saving). Under the hood: `sudo -n containerlab destroy --cleanup -t <topology>`. UI vocabulary is "Stop" not "Destroy" — topology and saved configs survive, so a subsequent Start is fully resumable. Refactored Save to share lab-inspection logic via new `src/actions/_helpers.ts`.
 2. **M4.1 — GitHub clone for Import.** Import opens with a QuickPick: 📁 Upload File or 🐙 Clone from GitHub. GitHub path includes empty-workspace fast path, destructive-confirm modal for non-empty workspaces, `git clone --progress` with line-streamed progress, 30s "still working" hint, 5-min hard timeout, and trusts code-server to handle GitHub auth.
 
-## What the dashboard shows (v0.4.2)
+## What the dashboard shows (v0.4.3)
 
 Open a sandbox lab workspace and the dashboard auto-opens with three live sections:
 

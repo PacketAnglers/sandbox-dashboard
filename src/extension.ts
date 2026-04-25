@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { runExport, runImport, runSave, runSetupGit, runStart, runStop, runTopologyView } from './actions';
 import { getGitIdentity, hasGitInWorkspace } from './git';
+import { isInFlight, markInFlight, unmarkInFlight } from './in-flight';
 import { StateRefresher } from './refresher';
+import type { ActionKind } from './types';
 import { showDashboard } from './webview';
 
 /**
@@ -52,10 +54,61 @@ import { showDashboard } from './webview';
 // dashboard will auto-open again — exactly what we want.
 const AUTO_OPEN_SHOWN_KEY = 'sandboxDashboard.autoOpenShown';
 
+/**
+ * Wrap an action body so it participates in the in-flight registry.
+ *
+ * Returns a callback suitable for vscode.commands.registerCommand. The
+ * returned callback:
+ *
+ *   1. Short-circuits silently if the same kind is already in flight.
+ *      This is the authoritative race-condition guard — even if a user
+ *      double-fires from the palette/keybinding (where button-disable
+ *      doesn't apply), the second invocation is a no-op.
+ *
+ *   2. Marks the kind in flight, schedules a state push (so the webview
+ *      sees the change within ~debounce and disables the button), then
+ *      runs the action body.
+ *
+ *   3. Unmarks the kind on completion via finally — runs whether the
+ *      action returned, threw, or rejected. A crashing action does not
+ *      permanently lock its button.
+ *
+ *   4. Schedules another state push after unmark so the button re-
+ *      enables promptly.
+ *
+ * Why this lives here and not in in-flight.ts: it has to call
+ * refresher.schedule(), which is wired up in activate(). Pulling
+ * refresher out into a module-level singleton just for this would be a
+ * bigger refactor than the helper deserves.
+ */
+function trackedCommand(
+    kind: ActionKind,
+    body: () => Promise<void>,
+    refresher: StateRefresher,
+    output: vscode.OutputChannel,
+): () => Promise<void> {
+    return async () => {
+        if (isInFlight(kind)) {
+            output.appendLine(
+                `[sandboxDashboard] ignoring concurrent invocation of ${kind} (already in flight)`,
+            );
+            return;
+        }
+        markInFlight(kind);
+        refresher.schedule(`action started: ${kind}`);
+        try {
+            await body();
+        } finally {
+            unmarkInFlight(kind);
+            refresher.schedule(`action ended: ${kind}`);
+        }
+    };
+}
+
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.4.2 — Start fallback picker + Topology View)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.3 — TopoViewer fix + in-flight tracking)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,
@@ -97,12 +150,30 @@ export function activate(context: vscode.ExtensionContext) {
             output.appendLine('[sandboxDashboard] refresh command invoked');
             refresher.schedule('refresh command');
         }),
-        vscode.commands.registerCommand('sandboxDashboard.import', () => runImport(context, output)),
-        vscode.commands.registerCommand('sandboxDashboard.start',  () => runStart(context, output)),
-        vscode.commands.registerCommand('sandboxDashboard.stop',   () => runStop(context, output)),
-        vscode.commands.registerCommand('sandboxDashboard.save',   () => runSave(context, output)),
-        vscode.commands.registerCommand('sandboxDashboard.export', () => runExport(context, output)),
-        vscode.commands.registerCommand('sandboxDashboard.topologyView', () => runTopologyView(context, output)),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.import',
+            trackedCommand('import', () => runImport(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.start',
+            trackedCommand('start', () => runStart(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.stop',
+            trackedCommand('stop', () => runStop(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.save',
+            trackedCommand('save', () => runSave(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.export',
+            trackedCommand('export', () => runExport(context, output), refresher, output),
+        ),
+        vscode.commands.registerCommand(
+            'sandboxDashboard.topologyView',
+            trackedCommand('topologyView', () => runTopologyView(context, output), refresher, output),
+        ),
         vscode.commands.registerCommand('sandboxDashboard.setupGit', () => runSetupGit(context, output)),
     );
 

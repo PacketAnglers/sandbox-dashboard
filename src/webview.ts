@@ -393,6 +393,16 @@ export class DashboardPanel {
             margin-right: 0.35rem;
             font-size: 0.95em;
         }
+        /* Busy state: button is disabled AND mid-execution. Adds a "..."
+           after the label so users can distinguish "this button is busy
+           working on what I asked" from "this button doesn't apply right
+           now". The disabled styling above already handles the greying;
+           this just adds the textual cue. Set/cleared by the set() helper
+           in updateButtonEnablement() based on state.inFlightActions. */
+        .action-btn--busy::after {
+            content: '…';
+            margin-left: 0.15em;
+        }
         code {
             font-family: var(--vscode-editor-font-family, 'SF Mono', Menlo, Consolas, monospace);
             background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.15));
@@ -676,18 +686,50 @@ export class DashboardPanel {
 
             function updateButtonEnablement(state) {
                 const hasWorkspace = !!(state && state.workspaceRoot);
-                const hasTopology = !!(state && state.topologies && state.topologies.length > 0);
+                // Computed but not currently consumed — leave in place as
+                // documentation. Start used to depend on this; now its
+                // three-step resolver (memory → glob → fallback picker)
+                // handles the no-topology case directly.
+                void (state && state.topologies && state.topologies.length > 0);
                 const hasDeployedLab = !!(
                     state && state.containerlab &&
                     state.containerlab.deployedLabs &&
                     state.containerlab.deployedLabs.length > 0
                 );
+                const inFlight = (state && state.inFlightActions) || [];
+
+                // Single helper: set BOTH disabled-state AND busy-state for a
+                // button in one call. Disabled-because-in-flight overrides
+                // enablement: if start is running, the Start button is
+                // disabled even when hasWorkspace is true.
+                //
+                // The busy class adds a "…" suffix via CSS ::after, giving
+                // users visual confirmation that something is in progress —
+                // not just an inert greyed-out button. Crucial for actions
+                // like Start where image pulls take 10-30s and the user
+                // would otherwise wonder if their click registered.
+                function set(id, kind, enablementOK) {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    const busy = inFlight.indexOf(kind) !== -1;
+                    const disabled = !enablementOK || busy;
+                    if (disabled) {
+                        el.setAttribute('disabled', 'disabled');
+                    } else {
+                        el.removeAttribute('disabled');
+                    }
+                    if (busy) {
+                        el.classList.add('action-btn--busy');
+                    } else {
+                        el.classList.remove('action-btn--busy');
+                    }
+                }
 
                 // Export & Import: both need a workspace to exist. Export has
                 // to have something to bundle; Import has to have somewhere
                 // to extract into.
-                setDisabled('action-export', !hasWorkspace);
-                setDisabled('action-import', !hasWorkspace);
+                set('action-export', 'export', hasWorkspace);
+                set('action-import', 'import', hasWorkspace);
 
                 // Start: needs a workspace. The runStart action has a
                 // three-step topology resolver:
@@ -695,35 +737,20 @@ export class DashboardPanel {
                 //   2. Glob discovery (*.clab.yml / *.clab.yaml)
                 //   3. Fallback file picker (for non-standard filenames)
                 // That means Start is useful even with zero glob matches,
-                // so we don't disable on !hasTopology anymore. The
-                // hasTopology signal still informs the Topologies SECTION
-                // display, just not this button's enablement.
-                setDisabled('action-start', !hasWorkspace);
+                // so we don't disable on !hasTopology.
+                set('action-start', 'start', hasWorkspace);
 
                 // Save & Stop: both need a deployed lab. The moment the
                 // last lab is destroyed, both buttons grey out together.
                 // Save captures configs from a running lab; Stop tears
                 // down a running lab. Neither has work to do otherwise.
-                setDisabled('action-save', !hasWorkspace || !hasDeployedLab);
-                setDisabled('action-stop', !hasWorkspace || !hasDeployedLab);
+                set('action-save', 'save', hasWorkspace && hasDeployedLab);
+                set('action-stop', 'stop', hasWorkspace && hasDeployedLab);
 
-                // Topology View: needs a deployed lab. Same enablement
-                // condition as Stop/Save because "look at the running
-                // lab" only makes sense when there IS a running lab.
-                // The action is a thin shim that dispatches to
-                // srl-labs' TopoViewer; button is live the moment a
-                // lab is deployed, dims the moment it's destroyed.
-                setDisabled('action-topology-view', !hasWorkspace || !hasDeployedLab);
-            }
-
-            function setDisabled(id, disabled) {
-                const el = document.getElementById(id);
-                if (!el) return;
-                if (disabled) {
-                    el.setAttribute('disabled', 'disabled');
-                } else {
-                    el.removeAttribute('disabled');
-                }
+                // Topology View: needs a deployed lab. Same condition as
+                // Stop/Save — "look at the running lab" only makes sense
+                // when there IS a running lab.
+                set('action-topology-view', 'topologyView', hasWorkspace && hasDeployedLab);
             }
 
             // Every 5 seconds, refresh any [data-timestamp] element on the page.

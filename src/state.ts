@@ -21,6 +21,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { inspectContainerlab } from './containerlab';
+import { inFlightSnapshot } from './in-flight';
 import type { TopologyFile, WorkspaceState } from './types';
 
 /**
@@ -55,6 +56,7 @@ export async function computeWorkspaceState(): Promise<WorkspaceState> {
                 deployedLabs: [],
                 lastCheckedAt: now,
             },
+            inFlightActions: inFlightSnapshot(),
             computedAt: now,
         };
     }
@@ -75,6 +77,7 @@ export async function computeWorkspaceState(): Promise<WorkspaceState> {
         workspaceRoot: root,
         topologies,
         containerlab,
+        inFlightActions: inFlightSnapshot(),
         computedAt: Date.now(),
     };
 }

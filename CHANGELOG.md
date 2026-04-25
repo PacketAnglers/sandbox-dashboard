@@ -5,7 +5,85 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.2] - 2026-04-24
+## [0.4.3] - 2026-04-25
+
+Third patch of the v0.4.x user-feedback cycle. One real bug surfaced in
+the v0.4.2 smoke test, plus a system-level fix for a hazard the same
+test logs revealed.
+
+### Fixed
+- **Topology View now actually opens.** v0.4.2 shipped the Topology
+  View button but srl-labs' TopoViewer command discovers its target
+  via the active text editor's URI. Dispatched from our webview, the
+  active editor was either nothing or our webview panel — neither
+  resolves to a topology file. Result: "No lab node or topology file
+  selected."
+
+  Fix: bridge editor context. Before dispatching, we open the deployed
+  lab's topology file as a preview tab via
+  `showTextDocument(uri, { preview: true, preserveFocus: false })`.
+  The preview-tab semantics (italic single tab, auto-replaced by next
+  preview file, easy to dismiss) read as transient. Topology path
+  comes from `containerlab inspect` (via shared inspectDeployedLabs
+  helper) so it works regardless of filename convention. Multi-lab
+  case shows a QuickPick.
+
+  Pre-open is best-effort: if `showTextDocument` fails, we log and
+  dispatch anyway — failure mode is no worse than v0.4.2.
+
+### Added
+- **In-flight action tracking.** The v0.4.2 smoke logs revealed a
+  serious race: a user clicked Start, didn't see immediate feedback
+  (image pull is slow), clicked again, and two concurrent
+  `containerlab deploy` invocations raced on the same topology. 13
+  "container already in use" errors followed; the lab eventually
+  recovered through containerlab's idempotency, but the chaos was
+  alarming and not guaranteed under different timing.
+
+  The same hazard applies to every action button. Fix: a system-level
+  in-flight registry.
+
+  - **`src/in-flight.ts`** — module-level `Set<ActionKind>` plus
+    `isInFlight()`, `markInFlight()`, `unmarkInFlight()`,
+    `inFlightSnapshot()` helpers.
+  - **`src/extension.ts`** — `trackedCommand()` helper wraps each
+    button-bound command. On invocation: short-circuits if the kind
+    is already in flight, marks it, schedules a state push, runs
+    the action body, and unmarks in a `finally` (runs even if the
+    action throws — no permanently-locked buttons).
+  - **`src/state.ts`** — `WorkspaceState` now carries
+    `inFlightActions: ActionKind[]`, populated from the registry
+    on every state computation.
+  - **`src/webview.ts`** — `updateButtonEnablement` refactored to
+    a unified `set(id, kind, enablementOK)` helper that handles
+    disabled-OR-busy in one place. Buttons that are mid-execution
+    get disabled AND get a `.action-btn--busy` class that adds a
+    "…" suffix via CSS `::after`. Users now see "Start…" while
+    deploy is running instead of an inert greyed button.
+
+  All six button-bound commands participate (import, start, stop,
+  save, export, topologyView). `setupGit` and `refresh` are
+  deliberately unwrapped — interactive prompt locks the user in;
+  refresh is instantaneous.
+
+  Defense in depth: the button-disable on click is a UX nicety,
+  but the authoritative race-condition guard is in `trackedCommand`,
+  which catches palette/keybinding-triggered concurrent invocations
+  too.
+
+### Notes
+- The integration-shim playbook documented in `topology-view.ts`
+  gained a new step 4: "Discover what context the target command
+  expects (active editor? specific selection? command args?) and
+  set it up BEFORE dispatch." The lesson from this release.
+- v0.4.2's smoke test confirmed the actual srl-labs TopoViewer
+  command ID: `containerlab.lab.graph.topoViewer`. Our dynamic
+  lookup found it correctly; the failure mode was purely the
+  editor-context one. Worth knowing for future srl-labs
+  integrations.
+- Pairs with `lab-base-sandbox` rev1.0.8 (extension bump only).
+
+
 
 Second patch of the v0.4.x user-feedback cycle. Two small but
 high-value adds from the v0.4.1 smoke test.

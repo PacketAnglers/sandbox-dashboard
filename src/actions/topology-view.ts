@@ -16,39 +16,114 @@
  *
  * COMMAND ID RESILIENCE
  * ─────────────────────
- * Instead of hardcoding srl-labs' command ID (which we'd have to
- * guess from the palette display and would break on any future
- * rename), we enumerate registered commands at runtime and look for
- * the first `containerlab.*` command whose ID contains "topoviewer"
- * (case-insensitive). This is a small cost (~one getCommands call)
- * but buys us resilience.
+ * Instead of hardcoding srl-labs' command ID, we enumerate registered
+ * commands at runtime and look for the first `containerlab.*` command
+ * whose ID contains "topoviewer" (case-insensitive). Buys resilience
+ * against future srl-labs renames. As of the v0.4.2 smoke test, the
+ * actual ID is `containerlab.lab.graph.topoViewer`.
  *
- * If no matching command is found, we surface a helpful error
- * toast explaining the srl-labs extension may not be installed.
- * Sandbox containers always ship it, but users running our
- * extension outside a sandbox container might hit this path.
+ * EDITOR-CONTEXT BRIDGING (added v0.4.3)
+ * ──────────────────────────────────────
+ * srl-labs' TopoViewer command discovers its target topology via the
+ * active text editor's URI. Dispatched from our webview, the active
+ * editor is either nothing or our webview panel — neither resolves to
+ * a topology file. Result: srl-labs surfaces "No lab node or topology
+ * file selected" and bails.
+ *
+ * We bridge by opening the deployed lab's topology file as a preview
+ * tab BEFORE dispatching. preview:true gives single-italic-tab
+ * semantics that read as transient (auto-replaced by the next preview
+ * file the user opens); preserveFocus:false ensures the editor
+ * actually becomes the active one before we dispatch.
+ *
+ * The topology path comes from `containerlab inspect` (via shared
+ * inspectDeployedLabs helper) rather than the dashboard's cached
+ * Topologies state — fresh source of truth, works for any deployed
+ * lab regardless of filename convention.
+ *
+ * INTEGRATION-SHIM PLAYBOOK
+ * ─────────────────────────
+ * Topology View is the first instance of "dashboard as launcher for
+ * other extensions' capabilities." The pattern that worked here:
+ *   1. Don't rebuild — defer to the upstream extension
+ *   2. Thin shim module in src/actions/
+ *   3. Dynamic command discovery, not hardcoded IDs
+ *   4. Discover what context the target command expects (active
+ *      editor? specific selection? command args?) and set it up
+ *      BEFORE dispatch
+ *   5. Clear error toast if target extension is missing
+ *   6. Button in actions row with appropriate enablement gate
+ *
+ * Step 4 is the lesson from v0.4.3: integration shims may need to
+ * BRIDGE context, not just dispatch.
  *
  * WHAT WE DON'T DO HERE
  * ─────────────────────
- * - We don't pass a specific topology file to TopoViewer. The
- *   srl-labs extension has its own discovery + disambiguation UI
- *   (their tree view lists deployed labs); letting them handle
- *   that keeps the boundary clean.
- * - We don't check lab-is-running ourselves before dispatching.
- *   The button is enablement-gated on deployed-lab state in the
- *   webview already; by the time dispatch happens, we trust that
- *   signal.
- * - We don't return from the dispatched command. TopoViewer takes
- *   focus; our job is done the moment the dispatch returns.
+ * - We don't pass a topology file as a command arg. srl-labs'
+ *   command doesn't accept one (it discovers via active editor).
+ * - We don't close the preview-opened editor afterward. Per Option C
+ *   from the v0.4.3 design discussion, we leave it open as a
+ *   transient preview tab — feels native, easy to dismiss.
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+
+import { inspectDeployedLabs, RunningLab } from './_helpers';
 
 export async function runTopologyView(
     _context: vscode.ExtensionContext,
     output: vscode.OutputChannel,
 ): Promise<void> {
     output.appendLine('[sandboxDashboard] action: topology-view');
+
+    // ── Resolve workspace root ─────────────────────────────────────────────
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+        vscode.window.showInformationMessage(
+            'Open a folder first — Topology View needs a workspace context.',
+        );
+        return;
+    }
+    const workspaceRoot = folders[0].uri.fsPath;
+
+    // ── Identify the deployed lab to view ──────────────────────────────────
+    // Fresh read via inspectDeployedLabs rather than relying on the
+    // dashboard's cached state. The button enablement gate in the webview
+    // already verified hasDeployedLab from cached state, but cached state
+    // can be up to 30s stale; by the time this dispatch runs, the lab
+    // could have been destroyed externally. Defensive re-check.
+    const deployed = await inspectDeployedLabs(output);
+    if (deployed.length === 0) {
+        vscode.window.showInformationMessage(
+            'No lab is currently deployed. Topology View needs a running lab to display.',
+        );
+        return;
+    }
+
+    let lab: RunningLab;
+    if (deployed.length === 1) {
+        lab = deployed[0];
+    } else {
+        const items = deployed.map((d) => ({
+            label: d.name,
+            description: `${d.nodeCount} node${d.nodeCount === 1 ? '' : 's'} · ${d.topologyPath}`,
+            lab: d,
+        }));
+        const picked = await vscode.window.showQuickPick(items, {
+            title: 'Pick a lab to open in Topology View',
+            placeHolder: 'Which deployed lab do you want to view?',
+            matchOnDescription: true,
+        });
+        if (!picked) {
+            output.appendLine('[sandboxDashboard] topology view cancelled by user (no lab picked)');
+            return;
+        }
+        lab = picked.lab;
+    }
+    output.appendLine(
+        `[sandboxDashboard] topology view: lab "${lab.name}" (topology ${lab.topologyPath})`,
+    );
 
     // ── Find TopoViewer command ────────────────────────────────────────────
     const commandId = await findTopoViewerCommand();
@@ -64,6 +139,40 @@ export async function runTopologyView(
         );
         if (action === 'View Log') output.show();
         return;
+    }
+
+    // ── Bridge editor context: pre-open topology as preview ────────────────
+    // srl-labs' TopoViewer command discovers its target via the active
+    // text editor's URI. Without an anchor it bails with "No lab node or
+    // topology file selected." We open the topology file as a preview
+    // tab (italic single-tab semantics, auto-replaced by next preview
+    // open) with preserveFocus:false so the editor actually becomes
+    // active before we dispatch.
+    //
+    // Resolve to absolute path: containerlab's labPath may be relative
+    // to wherever containerlab was invoked. We anchor against the
+    // workspace root so showTextDocument always gets a valid file URI.
+    const absoluteTopologyPath = path.isAbsolute(lab.topologyPath)
+        ? lab.topologyPath
+        : path.join(workspaceRoot, lab.topologyPath);
+
+    try {
+        await vscode.window.showTextDocument(
+            vscode.Uri.file(absoluteTopologyPath),
+            { preview: true, preserveFocus: false },
+        );
+        output.appendLine(
+            `[sandboxDashboard] anchored editor on ${absoluteTopologyPath} for TopoViewer`,
+        );
+    } catch (err) {
+        // Best-effort. If the file can't be opened (deleted, permissions,
+        // etc.) we still dispatch — worst case srl-labs surfaces the same
+        // "no topology" error we were trying to prevent, which is no
+        // worse than the pre-v0.4.3 behavior.
+        const msg = err instanceof Error ? err.message : String(err);
+        output.appendLine(
+            `[sandboxDashboard] could not pre-open ${absoluteTopologyPath}: ${msg}; dispatching anyway`,
+        );
     }
 
     output.appendLine(`[sandboxDashboard] dispatching to ${commandId}`);

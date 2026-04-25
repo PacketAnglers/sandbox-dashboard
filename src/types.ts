@@ -68,6 +68,18 @@ export interface WorkspaceState {
     topologies: TopologyFile[];
     /** Containerlab runtime status. */
     containerlab: ContainerlabStatus;
+    /**
+     * Action kinds currently in flight (running). Empty array when no
+     * actions are executing. Used by the webview to disable buttons for
+     * in-progress actions and visually mark them as busy with a "…"
+     * suffix, preventing the concurrent-deploy class of bug surfaced by
+     * the v0.4.2 smoke test (user clicks Start, doesn't see immediate
+     * feedback, clicks again, two deploys race).
+     *
+     * Optional / may be omitted by older state-construction paths;
+     * webview treats undefined as "no actions in flight."
+     */
+    inFlightActions?: ActionKind[];
     /** Epoch ms when the full state snapshot was computed. */
     computedAt: number;
 }
