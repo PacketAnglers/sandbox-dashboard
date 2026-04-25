@@ -691,11 +691,26 @@ export class DashboardPanel {
                 // three-step resolver (memory → glob → fallback picker)
                 // handles the no-topology case directly.
                 void (state && state.topologies && state.topologies.length > 0);
-                const hasDeployedLab = !!(
-                    state && state.containerlab &&
-                    state.containerlab.deployedLabs &&
-                    state.containerlab.deployedLabs.length > 0
-                );
+                const deployedLabs = (state && state.containerlab && state.containerlab.deployedLabs) || [];
+                const hasDeployedLab = deployedLabs.length > 0;
+                // Topology View needs the deployed lab's topology file to
+                // match *.clab.yml — that's how srl-labs.vscode-containerlab's
+                // tree view discovers labs, and their TopoViewer command
+                // can't dispatch against labs they can't see. The Start
+                // action's rename gate prompts users to rename non-conforming
+                // files BEFORE deploy, so this is usually true. But users
+                // can pick "Start without Renaming" in that prompt, which
+                // produces a deployed lab where topologyMatchesConvention
+                // is false; we mark the button accordingly so users learn
+                // the constraint via greyed-out + tooltip rather than via
+                // a confusing srl-labs error toast.
+                let hasConformingLab = false;
+                for (let i = 0; i < deployedLabs.length; i++) {
+                    if (deployedLabs[i].topologyMatchesConvention) {
+                        hasConformingLab = true;
+                        break;
+                    }
+                }
                 const inFlight = (state && state.inFlightActions) || [];
 
                 // Single helper: set BOTH disabled-state AND busy-state for a
@@ -708,7 +723,14 @@ export class DashboardPanel {
                 // not just an inert greyed-out button. Crucial for actions
                 // like Start where image pulls take 10-30s and the user
                 // would otherwise wonder if their click registered.
-                function set(id, kind, enablementOK) {
+                //
+                // disabledTitle (optional): tooltip shown via title attribute
+                // when the button is disabled-because-of-enablement (NOT
+                // disabled-because-busy). Helps users understand why a
+                // button they want to click is greyed — particularly useful
+                // for non-obvious gating like Topology View's convention
+                // check. Cleared when the button is enabled.
+                function set(id, kind, enablementOK, disabledTitle) {
                     const el = document.getElementById(id);
                     if (!el) return;
                     const busy = inFlight.indexOf(kind) !== -1;
@@ -722,6 +744,14 @@ export class DashboardPanel {
                         el.classList.add('action-btn--busy');
                     } else {
                         el.classList.remove('action-btn--busy');
+                    }
+                    // Apply tooltip only for the disabled-because-not-applicable
+                    // case. Disabled-because-busy doesn't need explanation —
+                    // the "…" suffix already communicates that.
+                    if (!enablementOK && !busy && disabledTitle) {
+                        el.setAttribute('title', disabledTitle);
+                    } else {
+                        el.removeAttribute('title');
                     }
                 }
 
@@ -747,10 +777,27 @@ export class DashboardPanel {
                 set('action-save', 'save', hasWorkspace && hasDeployedLab);
                 set('action-stop', 'stop', hasWorkspace && hasDeployedLab);
 
-                // Topology View: needs a deployed lab. Same condition as
-                // Stop/Save — "look at the running lab" only makes sense
-                // when there IS a running lab.
-                set('action-topology-view', 'topologyView', hasWorkspace && hasDeployedLab);
+                // Topology View: needs a deployed lab AND that lab's topology
+                // file must match the *.clab.yml convention. Per-condition
+                // tooltip helps users understand which case they hit.
+                let topoViewTooltip = '';
+                if (!hasWorkspace) {
+                    topoViewTooltip = 'Open a folder to enable Topology View.';
+                } else if (!hasDeployedLab) {
+                    topoViewTooltip = 'Start a lab to enable Topology View.';
+                } else if (!hasConformingLab) {
+                    topoViewTooltip =
+                        'Topology View requires the deployed topology file ' +
+                        'to be named *.clab.yml (the Containerlab extension ' +
+                        'discovers labs that way). Stop the lab, then Start ' +
+                        'it again and choose "Rename and Start" at the prompt.';
+                }
+                set(
+                    'action-topology-view',
+                    'topologyView',
+                    hasWorkspace && hasDeployedLab && hasConformingLab,
+                    topoViewTooltip,
+                );
             }
 
             // Every 5 seconds, refresh any [data-timestamp] element on the page.

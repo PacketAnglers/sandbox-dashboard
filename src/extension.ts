@@ -108,7 +108,7 @@ function trackedCommand(
 export function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel('Sandbox Dashboard');
     context.subscriptions.push(output);
-    output.appendLine('[sandboxDashboard] activated (v0.4.3 — TopoViewer fix + in-flight tracking)');
+    output.appendLine('[sandboxDashboard] activated (v0.4.4 — ecosystem-rename gate)');
 
     // ── Reactivity engine ──────────────────────────────────────────────────
     // StateRefresher installs file watchers on *.clab.yml / *.clab.yaml,

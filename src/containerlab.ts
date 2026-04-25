@@ -177,10 +177,23 @@ function extractDeployedLabs(parsed: unknown): DeployedLab[] | null {
         if (existing) {
             existing.nodeCount += 1;
         } else {
+            // Convention check: srl-labs.vscode-containerlab's tree view
+            // discovers labs via files matching *.clab.yml or *.clab.yaml.
+            // Labs deployed from non-conforming filenames (lab.yml,
+            // topology.yaml) won't appear in their tree, which means
+            // their TopoViewer command can't dispatch against them. We
+            // surface this signal in WorkspaceState so the webview can
+            // per-lab disable the Topology View button with a helpful
+            // tooltip rather than letting users click into a srl-labs
+            // error toast. The Start action's rename gate prompts users
+            // to fix this BEFORE deploy; this flag matters only for labs
+            // that were deployed without the rename.
+            const matches = /\.clab\.ya?ml$/i.test(topologyPath);
             byLab.set(labName, {
                 name: labName,
                 topologyPath,
                 nodeCount: 1,
+                topologyMatchesConvention: matches,
             });
         }
     }

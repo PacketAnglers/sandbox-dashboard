@@ -48,6 +48,25 @@ export interface DeployedLab {
     name: string;
     topologyPath: string;
     nodeCount: number;
+    /**
+     * True iff `topologyPath` ends in `.clab.yml` or `.clab.yaml` (the
+     * naming convention srl-labs.vscode-containerlab requires for its
+     * tree-view discovery).
+     *
+     * Labs deployed from non-conforming filenames (e.g. `lab.yml`,
+     * `topology.yaml`) are invisible to srl-labs' tree view, which
+     * means their TopoViewer command can't find a target lab node and
+     * will bail with "No lab node or topology file selected". The
+     * webview uses this flag to per-lab disable the Topology View
+     * button — it's better to dim the button with an explanatory
+     * tooltip than to let users click into a confusing srl-labs error.
+     *
+     * The Start action prompts users to rename non-conforming files
+     * before deploy, so this should be true for most labs in practice.
+     * It's only false when the user explicitly chose "Start without
+     * Renaming" at the Start prompt.
+     */
+    topologyMatchesConvention: boolean;
 }
 
 export interface ContainerlabStatus {

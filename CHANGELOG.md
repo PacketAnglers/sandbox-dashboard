@@ -5,7 +5,86 @@ All notable changes to the **Sandbox Dashboard** extension are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.3] - 2026-04-25
+## [0.4.4] - 2026-04-25
+
+Fourth patch of the v0.4.x user-feedback cycle. v0.4.3's TopoViewer
+"fix" only worked for labs whose topology files matched the
+`*.clab.yml` convention — a constraint we didn't know about until
+v0.4.3 smoke testing forced us to investigate.
+
+### The story
+v0.4.3 shipped an editor pre-open intended to fix Topology View
+against the deployed lab. Smoke testing surfaced that the fix
+didn't actually work for the user's lab — a repo whose topology
+file was named `lab.yml` (no `.clab.` prefix). Renaming to
+`topology.clab.yml` made it work.
+
+Root cause: `srl-labs.vscode-containerlab`'s tree view discovers
+labs via files matching `*.clab.yml` / `*.clab.yaml`. Their
+TopoViewer command operates on tree-view nodes (with active-editor
+fallback that ALSO requires the file to be in their tree). Labs
+deployed from non-conforming filenames are invisible to their
+ecosystem entirely.
+
+This is structural, not a bug we can patch. v0.4.2's Start fallback
+picker (which lets users deploy any topology file regardless of
+naming) inadvertently created a class of users srl-labs can't serve.
+
+### Added
+- **Ecosystem-compatibility rename gate at Start time.** When a user
+  starts a lab whose topology file doesn't match `*.clab.yml`, a
+  three-button modal appears BEFORE deploy:
+  1. **Rename and Start** — `fs.rename` to `<stem>.clab.yml` (or
+     `.clab.yaml` if the source was `.yaml`), update remembered
+     topology, deploy. Collision-detected: if `<stem>.clab.yml`
+     already exists, a follow-up "delete existing & rename / cancel"
+     prompt prevents silent overwrite.
+  2. **Start without Renaming** — deploy with the original filename.
+     The deployed lab will be marked `topologyMatchesConvention:
+     false` in state, and Topology View will be disabled per-lab.
+  3. **Cancel** — don't deploy at all.
+
+  Renaming BEFORE deploy is the only sane time to do it: rename-
+  after-deploy creates broken state because containerlab's metadata
+  is stamped with the original filename.
+
+  The prompt explicitly mentions the workspace-modification effect
+  for git-tracked files so users can make an informed choice.
+
+- **`DeployedLab.topologyMatchesConvention: boolean`** field
+  populated in `src/containerlab.ts` from the inspect output. Single
+  regex `/\.clab\.ya?ml$/i` defines conformance; the same regex
+  triggers the rename gate in `src/actions/start.ts` (DRY: one
+  source of truth for "what counts as conforming").
+
+- **Per-lab Topology View enablement** in the dashboard. The button
+  now requires a deployed lab AND that lab to be conforming. Per-
+  case tooltip explains the disablement reason — "Open a folder",
+  "Start a lab", or "Topology View requires the deployed topology
+  file to be named *.clab.yml..." with instructions for the
+  rename-on-restart path.
+
+- **Generalized `set()` helper** in webview now accepts an optional
+  `disabledTitle` for the disabled-because-not-applicable case
+  (NOT for disabled-because-busy — the "…" suffix already
+  communicates that). Cleaner separation of "why is this button
+  off" cues.
+
+### Notes
+- The `.yaml`-vs-`.yml` choice from the source extension is
+  preserved in the rename target. Users with strong opinions about
+  YAML extension convention won't be silently flipped.
+- For non-conforming deployed labs, our existing v0.4.3 editor
+  pre-open is still a good practice (it removes one possible failure
+  mode even if it can't help here), so we kept it.
+- This release exposes a broader truth: the dashboard's flexibility
+  ("works with any topology file") needs to be balanced against
+  ecosystem fit ("srl-labs requires *.clab.yml"). Future integration
+  shims (Edgeshark, Inspect, etc.) will likely face the same
+  constraint and benefit from the same per-lab gating pattern.
+- Pairs with `lab-base-sandbox` rev1.0.9 (extension bump only).
+
+
 
 Third patch of the v0.4.x user-feedback cycle. One real bug surfaced in
 the v0.4.2 smoke test, plus a system-level fix for a hazard the same

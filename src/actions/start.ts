@@ -40,6 +40,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { spawn } from 'child_process';
 
 const CLAB_GLOBS = ['**/*.clab.yml', '**/*.clab.yaml'];
@@ -194,6 +195,43 @@ export async function runStart(
     rememberedTopology.set(workspaceRoot, topologyPath);
     output.appendLine(`[sandboxDashboard] start: using topology ${topologyPath}`);
 
+    // ── Ecosystem-compatibility rename gate ────────────────────────────────
+    //
+    // srl-labs.vscode-containerlab's tree view discovers labs via files
+    // matching *.clab.yml or *.clab.yaml. Labs deployed from non-conforming
+    // filenames (lab.yml, topology.yaml, etc.) are invisible to that tree,
+    // which means features like Topology View can't find the lab and bail
+    // with confusing errors.
+    //
+    // Best fix is to rename BEFORE deploy: rename-after-deploy creates a
+    // broken state because containerlab's metadata is stamped with the
+    // original filename. So we offer the rename here, while the file is
+    // just sitting on disk and renaming is cheap and reversible.
+    //
+    // Three outcomes:
+    //   - 'Rename and Start' → fs.rename, update remembered topology, deploy
+    //   - 'Start without Renaming' → deploy as-is; Topology View will be
+    //                                 disabled for this lab in the dashboard
+    //   - 'Cancel' / dismiss → don't deploy at all
+    //
+    // The convention check uses the same regex as containerlab.ts so
+    // there's a single source of truth for "what counts as conforming."
+    if (!/\.clab\.ya?ml$/i.test(topologyPath)) {
+        const maybeRenamed = await offerEcosystemRename(topologyPath, output);
+        if (maybeRenamed === undefined) {
+            // User chose Cancel, or collision check failed unrecoverably.
+            output.appendLine('[sandboxDashboard] start cancelled at rename gate');
+            return;
+        }
+        if (maybeRenamed !== topologyPath) {
+            // Rename succeeded — track the new path everywhere.
+            topologyPath = maybeRenamed;
+            rememberedTopology.set(workspaceRoot, topologyPath);
+            output.appendLine(`[sandboxDashboard] start: renamed to ${topologyPath}`);
+        }
+        // Else: user chose 'Start without Renaming' — proceed with original path.
+    }
+
     // ── Deploy with progress ───────────────────────────────────────────────
     try {
         await vscode.window.withProgress(
@@ -249,6 +287,135 @@ export async function runStart(
  *
  * Resolves on exit code 0, rejects with a message derived from stderr
  * (or exit code) otherwise.
+ */
+/**
+ * Three-button modal: offer to rename a non-conforming topology file
+ * to *.clab.yml so srl-labs ecosystem features (Topology View, etc.)
+ * work against it.
+ *
+ * Returns:
+ *   - The new path (string ending in .clab.yml/.clab.yaml) if renamed
+ *   - The original path unchanged if user picked 'Start without Renaming'
+ *   - undefined if user cancelled OR if a collision was unrecoverable
+ *
+ * Collision handling: if the target name already exists, we offer a
+ * follow-up "delete and rename / cancel" choice rather than silently
+ * blowing away the existing file. fs.rename would unconditionally
+ * overwrite on POSIX and that's not the user-expected default.
+ *
+ * Naming derivation: replace the existing extension with .clab.yml.
+ * `lab.yml` → `lab.clab.yml`, `topology.yaml` → `topology.clab.yaml`.
+ * Preserves yaml-vs-yml choice from the source (some users have strong
+ * opinions about that). If the file has no extension at all (unusual),
+ * we append .clab.yml.
+ */
+async function offerEcosystemRename(
+    originalPath: string,
+    output: vscode.OutputChannel,
+): Promise<string | undefined> {
+    const originalDir = path.dirname(originalPath);
+    const originalBase = path.basename(originalPath);
+    const originalExt = path.extname(originalBase); // includes the dot
+    const stem = originalExt
+        ? originalBase.slice(0, -originalExt.length)
+        : originalBase;
+    // Preserve .yaml-vs-.yml from source; default to .yml if neither.
+    const targetExt = /\.yaml$/i.test(originalExt) ? '.clab.yaml' : '.clab.yml';
+    const targetBase = stem + targetExt;
+    const targetPath = path.join(originalDir, targetBase);
+
+    output.appendLine(
+        `[sandboxDashboard] rename gate: ${originalBase} → ${targetBase} candidate`,
+    );
+
+    const choice = await vscode.window.showWarningMessage(
+        `Rename "${originalBase}" to "${targetBase}" before starting?`,
+        {
+            modal: true,
+            detail:
+                'Sandbox Dashboard can deploy any topology file, but features like ' +
+                'Topology View (provided by the Containerlab extension) require the ' +
+                '*.clab.yml naming convention. Renaming now enables full ecosystem ' +
+                'compatibility.\n\n' +
+                'This rename will modify your workspace. If the file is git-tracked, ' +
+                "you'll see this as a deletion plus an addition until you commit.",
+        },
+        'Rename and Start',
+        'Start without Renaming',
+    );
+
+    if (!choice) {
+        // ESC / X / Cancel → abort the whole Start.
+        return undefined;
+    }
+
+    if (choice === 'Start without Renaming') {
+        output.appendLine('[sandboxDashboard] rename gate: user declined rename');
+        return originalPath;
+    }
+
+    // 'Rename and Start' → check for collision before doing anything.
+    if (fs.existsSync(targetPath)) {
+        output.appendLine(
+            `[sandboxDashboard] rename gate: collision — ${targetBase} already exists`,
+        );
+        const collisionChoice = await vscode.window.showWarningMessage(
+            `"${targetBase}" already exists in this directory.`,
+            {
+                modal: true,
+                detail:
+                    `Renaming "${originalBase}" would overwrite "${targetBase}".\n\n` +
+                    'Choose how to proceed:\n' +
+                    `• Delete existing & rename: removes "${targetBase}", then renames "${originalBase}" → "${targetBase}".\n` +
+                    '• Cancel: don\'t rename, return to the rename prompt (you can choose "Start without Renaming" there).',
+            },
+            'Delete existing & rename',
+            'Cancel',
+        );
+        if (collisionChoice !== 'Delete existing & rename') {
+            output.appendLine('[sandboxDashboard] rename gate: collision cancel');
+            return undefined; // Abort whole Start; user can retry and pick a different option.
+        }
+        try {
+            await fsp.unlink(targetPath);
+            output.appendLine(`[sandboxDashboard] rename gate: removed existing ${targetBase}`);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            output.appendLine(`[sandboxDashboard] rename gate: unlink failed: ${msg}`);
+            const action = await vscode.window.showErrorMessage(
+                `Couldn't remove existing "${targetBase}": ${msg}`,
+                'View Log',
+            );
+            if (action === 'View Log') output.show();
+            return undefined;
+        }
+    }
+
+    // Perform the rename.
+    try {
+        await fsp.rename(originalPath, targetPath);
+        output.appendLine(
+            `[sandboxDashboard] rename gate: ${originalBase} → ${targetBase} OK`,
+        );
+        return targetPath;
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        output.appendLine(`[sandboxDashboard] rename gate: rename failed: ${msg}`);
+        const action = await vscode.window.showErrorMessage(
+            `Couldn't rename "${originalBase}": ${msg}. Lab was NOT started.`,
+            'View Log',
+        );
+        if (action === 'View Log') output.show();
+        return undefined;
+    }
+}
+
+/**
+ * Run `sudo -n containerlab deploy -t <topology>`.
+ *
+ * Streams stdout/stderr line-by-line to the output channel, and surfaces
+ * the most recent line as the progress notification's message. Resolves
+ * on exit code 0; rejects with the most useful stderr line otherwise.
  */
 function runDeploy(
     topologyPath: string,
